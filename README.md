@@ -1,13 +1,14 @@
 # Fastshot
 
-Fastshot is a versatile screen capturing tool that allows users to take screenshots, annotate them with paint and text tools, and perform OCR (Optical Character Recognition) to extract text from images. The application provides an intuitive interface and can be extended with plugins.
+Fastshot is an open-source Python-based screenshot tool for Windows, inspired by Snipaste. It provides a versatile and user-friendly interface for capturing and annotating screenshots, making it ideal for research, reading papers, writing code, and various comparison and demonstration scenarios.
 
 ## Features
 
-- **Screen Capturing**: Capture any part of your screen using a customizable hotkey.
-- **Annotation Tools**: Use paint and text tools to annotate your screenshots.
+- **Always on Top**: Screenshots stay on top, allowing easy comparison.
+- **Smooth Zoom and Drag**: Effortlessly zoom and drag screenshots.
+- **Annotation Tools**: Hand-drawing and text mode for annotations.
+- **Clipboard Export**: Easily export screenshots to the clipboard.
 - **OCR Integration**: Extract text from images using the built-in OCR plugin powered by PaddleOCR.
-- **Plugin System**: Easily extend the functionality with plugins.
 
 ## Installation
 
@@ -26,35 +27,98 @@ fastshot
 ```
 
 ## Hotkeys
-F1: Activate screen capturing mode.
+`Ctrl+F1`: Activate screen capturing mode.
 
-Ctrl+P: Activate paint mode.
+`Ctrl+P`: Activate paint mode.
 
-Ctrl+T: Activate text mode.
+`Ctrl+T`: Activate text mode.
 
-Esc: Exit the current mode.
+`Esc`: Exit the current mode.
 
 ## Right-Click Menu
 
-Close: Close the current window.
+`❌ Close`: Close the current window.
 
-Save As...: Save the current screenshot.
+`💾 Save As...`: Save the current screenshot.
 
-Paint: Activate paint mode.
+`🖌️ Paint`: Activate paint mode.
 
-Undo: Undo the last action.
+`↩️ Undo`: Undo the last action.
 
-Exit Edit: Exit paint or text mode.
+`🚪 Exit Edit`: Exit paint or text mode.
 
-Copy: Copy the current screenshot to the clipboard.
+`📋 Copy`: Copy the current screenshot to the clipboard.
 
-Text: Activate text mode.
+`🔤 Text`: Activate text mode.
 
-OCR: Perform OCR on the current screenshot and copy the result to the clipboard.
+🔍 OCR: Perform OCR on the current screenshot and copy the result to the clipboard.
 
+
+## Plugin Development
+
+Fastshot supports a plugin mechanism that allows developers to extend its functionality. Here is a brief description of how to develop a plugin:
+
+
+1. **Create a Plugin Class**: Your plugin should be a Python class with the desired functionality. For example, an OCR plugin might look like this:
+
+    ```python
+    from paddleocr import PaddleOCR
+    from PIL import Image
+    import win32clipboard
+    import tkinter as tk
+
+    class PluginOCR:
+        def __init__(self):
+            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
+
+        def ocr(self, image):
+            result = self.ocr_engine.ocr(image, cls=True)
+            ocr_text = "\n".join([line[1][0] for res in result for line in res])
+            self.copy_to_clipboard(ocr_text)
+            return ocr_text
+
+        def copy_to_clipboard(self, text):
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+            win32clipboard.CloseClipboard()
+
+        def show_message(self, message, parent):
+            label = tk.Label(parent, text=message, bg="yellow", fg="black", font=("Helvetica", 10))
+            label.pack(side="bottom", fill="x")
+            parent.after(3000, label.destroy)
+    ```
+
+2. **Register the Plugin**: In the `SnipasteApp` class, you can register your plugin by adding it to the plugin list.
+
+    ```python
+    class SnipasteApp:
+        def load_plugins(self):
+            plugin_modules = ['fastshot.plugin_ocr']  # Add your plugin module here
+            for module_name in plugin_modules:
+                module = importlib.import_module(module_name)
+                plugin_class = getattr(module, 'PluginOCR')
+                self.plugins[module_name] = plugin_class()
+    ```
+
+3. **Invoke the Plugin**: You can invoke the plugin from your application code, such as from a menu item.
+
+    ```python
+    def ocr(self):
+        plugin = self.app.plugins.get('fastshot.plugin_ocr')
+        if plugin:
+            img_path = 'temp.png'
+            self.img_label.zoomed_image.save(img_path)
+            result = plugin.ocr(img_path)
+            plugin.show_message("OCR result updated in clipboard", self.img_window)
+    ```
+
+By following these steps, you can create and integrate custom plugins to extend the functionality of Fastshot.
 
 ## Development
-Setting Up the Development Environment
+
+### Setting Up the Development Environment
+
 1. Clone the repository:
 
 ```sh
@@ -63,11 +127,13 @@ cd fastshot
 ```
 
 2. Install the dependencies:
+
 ```sh
 pip install -r requirements.txt
 ```
 
-## Running Tests
+### Running Tests
+
 You can run the tests using:
 
 ```sh
@@ -79,8 +145,4 @@ We welcome contributions! Please read our Contributing Guidelines for more detai
 
 ## License
 This project is licensed under the Apache License - see the LICENSE file for details.
-
-
-
-
 
