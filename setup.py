@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='0.1.6',  # 更新版本号
+    version='0.1.51',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
