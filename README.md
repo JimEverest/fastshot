@@ -146,3 +146,13 @@ We welcome contributions! Please read our Contributing Guidelines for more detai
 ## License
 This project is licensed under the Apache License - see the LICENSE file for details.
 
+## Todo:
+1. tk window force trigger. 
+2. ~~ppocr[Default]~~
+3. ~~screenpen integration~~
+4. hyder
+5. transprent window
+6. pyinstaller.
+
+
+

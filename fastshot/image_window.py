@@ -4,12 +4,14 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
 import win32clipboard
 from pynput import keyboard
+
 from .paint_tool import PaintTool
 from .text_tool import TextTool
 
 class ImageWindow:
-    def __init__(self, app, img):
+    def __init__(self, app, img, config):
         self.app = app
+        self.config = config
         self.root = app.root
         self.img_window = tk.Toplevel(self.root)
         self.img_window.overrideredirect(True)
@@ -44,19 +46,21 @@ class ImageWindow:
         def for_canonical(f):
             return lambda k: f(self.listener.canonical(k))
 
-        hotkey_paint = keyboard.HotKey(keyboard.HotKey.parse('<ctrl>+p'), on_activate_paint)
-        hotkey_text = keyboard.HotKey(keyboard.HotKey.parse('<ctrl>+t'), on_activate_text)
+        # 从配置文件获取快捷键
+        hotkey_paint_str = self.config['Shortcuts'].get('hotkey_paint', '<ctrl>+p')
+        hotkey_text_str = self.config['Shortcuts'].get('hotkey_text', '<ctrl>+t')
+
+        hotkey_paint = keyboard.HotKey(keyboard.HotKey.parse(hotkey_paint_str), on_activate_paint)
+        hotkey_text = keyboard.HotKey(keyboard.HotKey.parse(hotkey_text_str), on_activate_text)
 
         self.listener = keyboard.Listener(
             on_press=for_canonical(hotkey_paint.press),
             on_release=for_canonical(hotkey_paint.release))
-        
         self.listener.start()
 
         self.listener_text = keyboard.Listener(
             on_press=for_canonical(hotkey_text.press),
             on_release=for_canonical(hotkey_text.release))
-        
         self.listener_text.start()
 
     def set_paint_tool(self, paint_tool):
@@ -91,23 +95,23 @@ class ImageWindow:
 
         # 使用 Unicode 字符作为图标
         icons = {
+            "Copy": "📋",
             "Close": "❌",
             "Save As...": "💾",
             "Paint": "🖌️",
             "Undo": "↩️",
             "Exit Edit": "🚪",
-            "Copy": "📋",
             "Text": "🔤",
             "OCR": "🔍"
         }
 
         commands = {
+            "Copy": self.copy,
             "Close": self.close,
             "Save As...": self.save_as,
             "Paint": self.paint,
             "Undo": self.undo,
             "Exit Edit": self.exit_edit_mode,
-            "Copy": self.copy,
             "Text": self.text,
             "OCR": self.ocr
         }

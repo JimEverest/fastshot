@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='0.1.0',
+    version='0.1.6',  # 更新版本号
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -25,7 +25,7 @@ setup(
     author='Your Name',
     author_email='your-email@example.com',
     description='A versatile screen capturing tool with annotation and OCR features',
-    long_description=open('README.md').read(),
+    long_description=open('README.md', encoding='utf-8').read(),  # 使用 UTF-8 编码
     long_description_content_type='text/markdown',
     url='https://github.com/yourusername/fastshot',
     classifiers=[
