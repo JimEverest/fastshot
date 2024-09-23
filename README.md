@@ -147,14 +147,16 @@ We welcome contributions! Please read our Contributing Guidelines for more detai
 This project is licensed under the Apache License - see the LICENSE file for details.
 
 ## Todo:
-1. tk window force trigger. 
+1. ~~tk window force trigger ~~
 2. ~~ppocr[Default]~~
 3. ~~screenpen integration~~
 4. hyder
 5. ~~transprent window~~
 6. ~~fixed on top~~
 7. pyinstaller.
-8. gdt-4o multimodal task(OCR/QA)AS
+8. gdt-4o multimodal task(OCR/QA)
+9. UI(PySimpleGUI/WebPortal)
+
 
 
 
