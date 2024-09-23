@@ -95,3 +95,4 @@ class SnippingTool:
         img = Image.open(io.BytesIO(img))
         img = img.convert('RGB')
         self.on_screenshot(img)
+

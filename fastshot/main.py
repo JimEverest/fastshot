@@ -1,3 +1,14 @@
+import os
+if os.name == 'nt':
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
+    except Exception as e:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception as e:
+            print(f"无法设置DPI感知: {e}")
+
 import tkinter as tk
 from pynput import keyboard
 from screeninfo import get_monitors
@@ -11,6 +22,7 @@ import zipfile
 from fastshot.snipping_tool import SnippingTool
 from fastshot.image_window import ImageWindow
 from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
+from fastshot.window_control import HotkeyListener, load_config
 
 class SnipasteApp:
     def __init__(self):
@@ -25,6 +37,9 @@ class SnipasteApp:
         self.check_and_download_models()
         self.load_plugins()
         self.setup_hotkey_listener()
+        listener = HotkeyListener(self.config)
+        listener.start()
+
 
         # 初始化 ScreenPen
         enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)

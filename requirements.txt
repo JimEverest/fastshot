@@ -7,4 +7,5 @@
 "pyperclip",
 "pywin32",
 "paddleocr",
-"paddlepaddle"
+"paddlepaddle",
+"pywin32"
