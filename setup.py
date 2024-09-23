@@ -22,16 +22,16 @@ setup(
             'fastshot = fastshot.main:main',
         ],
     },
-    author='Your Name',
-    author_email='your-email@example.com',
+    author='Jim T',
+    author_email='tianwai263@gmail.com',
     description='A versatile screen capturing tool with annotation and OCR features',
     long_description=open('README.md', encoding='utf-8').read(),  # 使用 UTF-8 编码
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/fastshot',
+    url='https://github.com/jimeverest/fastshot',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.7',
 )

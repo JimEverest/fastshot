@@ -151,8 +151,8 @@ This project is licensed under the Apache License - see the LICENSE file for det
 2. ~~ppocr[Default]~~
 3. ~~screenpen integration~~
 4. hyder
-5. transprent window.
-6. fixed on top.
+5. ~~transprent window~~
+6. ~~fixed on top~~
 7. pyinstaller.
 8. gdt-4o multimodal task(OCR/QA)AS
 
