@@ -18,11 +18,18 @@ import os
 import configparser
 import urllib.request
 import zipfile
+import shutil
 
 from fastshot.snipping_tool import SnippingTool
 from fastshot.image_window import ImageWindow
 from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
+
+
+
+
+
+
 
 class SnipasteApp:
     def __init__(self):
@@ -97,30 +104,69 @@ class SnipasteApp:
             value = self.config['Shortcuts'].get(key, '')
             print(f"{desc}: {value}")
 
+    # def check_and_download_models(self):
+    #     home_dir = os.path.expanduser('~')  #C:\Users\xxxxxxx/
+    #     paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')#C:\Users\xxxxxxx/.paddleocr/whl/
+    #     model_dirs = [
+    #         os.path.join(paddleocr_dir, 'det', 'ch', 'ch_PP-OCRv4_det_infer'),#C:\Users\xxxxxxx/.paddleocr/whl/det/ch/ch_PP-OCRv4_det_infer/
+    #         os.path.join(paddleocr_dir, 'rec', 'ch', 'ch_PP-OCRv4_rec_infer'),#C:\Users\xxxxxxx/.paddleocr/whl/rec/ch/ch_PP-OCRv4_rec_infer/
+    #         os.path.join(paddleocr_dir, 'cls', 'ch_ppocr_mobile_v2.0_cls_infer')#C:\Users\xxxxxxx/.paddleocr/whl/cls/ch_ppocr_mobile_v2.0_cls_infer/
+    #     ]
+    #     models_exist = all(os.path.exists(model_dir) for model_dir in model_dirs)
+    #     if not models_exist:
+    #         print("未找到 PaddleOCR 模型文件，正在下载...")
+    #         download_url = self.config['Paths'].get('download_url')#C:\Users\xxxxxxx/.paddleocr.zip
+    #         zip_path = os.path.join(home_dir, '.paddleocr.zip')
+    #         try:
+    #             urllib.request.urlretrieve(download_url, zip_path)
+    #             print("下载完成，正在解压...")
+    #             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    #                 zip_ref.extractall(home_dir)
+    #             print("模型文件解压完成。")
+    #             os.remove(zip_path)
+    #         except Exception as e:
+    #             print(f"下载和解压模型文件失败: {e}")
+    #     else:
+    #         print("PaddleOCR 模型文件已存在。")
+
     def check_and_download_models(self):
-        home_dir = os.path.expanduser('~')
-        paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')
+        home_dir = os.path.expanduser('~')  # C:\Users\xxxxxxx/
+        paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')  # C:\Users\xxxxxxx/.paddleocr/whl/
         model_dirs = [
-            os.path.join(paddleocr_dir, 'det', 'ch', 'ch_PP-OCRv4_det_infer'),
-            os.path.join(paddleocr_dir, 'rec', 'ch', 'ch_PP-OCRv4_rec_infer'),
-            os.path.join(paddleocr_dir, 'cls', 'ch_ppocr_mobile_v2.0_cls_infer')
+            os.path.join(paddleocr_dir, 'det', 'ch', 'ch_PP-OCRv4_det_infer'),  # C:\Users\xxxxxxx/.paddleocr/whl/det/ch/ch_PP-OCRv4_det_infer/
+            os.path.join(paddleocr_dir, 'rec', 'ch', 'ch_PP-OCRv4_rec_infer'),  # C:\Users\xxxxxxx/.paddleocr/whl/rec/ch/ch_PP-OCRv4_rec_infer/
+            os.path.join(paddleocr_dir, 'cls', 'ch_ppocr_mobile_v2.0_cls_infer')  # C:\Users\xxxxxxx/.paddleocr/whl/cls/ch_ppocr_mobile_v2.0_cls_infer/
         ]
         models_exist = all(os.path.exists(model_dir) for model_dir in model_dirs)
+        
         if not models_exist:
-            print("未找到 PaddleOCR 模型文件，正在下载...")
-            download_url = self.config['Paths'].get('download_url')
+            print("未找到 PaddleOCR 模型文件，尝试从本地拷贝...")
             zip_path = os.path.join(home_dir, '.paddleocr.zip')
+            local_resource_zip = os.path.join(os.path.dirname(__file__), 'resources', 'paddleocr.zip')
+            
             try:
-                urllib.request.urlretrieve(download_url, zip_path)
-                print("下载完成，正在解压...")
+                # 尝试从 resources 目录拷贝 paddleocr.zip
+                shutil.copy(local_resource_zip, zip_path)
+                print("从本地 resources 目录拷贝成功，正在解压...")
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(home_dir)
                 print("模型文件解压完成。")
                 os.remove(zip_path)
             except Exception as e:
-                print(f"下载和解压模型文件失败: {e}")
+                print(f"从本地拷贝失败: {e}，开始从网络下载...")
+                download_url = self.config['Paths'].get('download_url')  # 从配置文件中获取下载链接
+                try:
+                    urllib.request.urlretrieve(download_url, zip_path)
+                    print("下载完成，正在解压...")
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(home_dir)
+                    print("模型文件解压完成。")
+                    os.remove(zip_path)
+                except Exception as e:
+                    print(f"下载和解压模型文件失败: {e}")
         else:
             print("PaddleOCR 模型文件已存在。")
+            
 
     def load_plugins(self):
         plugin_modules = ['fastshot.plugin_ocr']  # 可以在此添加更多插件模块
