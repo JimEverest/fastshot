@@ -1,1 +1,2 @@
 include fastshot/config.ini
+include fastshot/resources/paddleocr.zip
