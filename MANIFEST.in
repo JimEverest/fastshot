@@ -1,2 +1,4 @@
 include fastshot/config.ini
 include fastshot/resources/paddleocr.zip
+include fastshot/resources/user_icon.png
+include fastshot/resources/ai_icon.png

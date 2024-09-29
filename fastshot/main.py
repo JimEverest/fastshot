@@ -169,10 +169,13 @@ class SnipasteApp:
             
 
     def load_plugins(self):
-        plugin_modules = ['fastshot.plugin_ocr']  # 可以在此添加更多插件模块
-        for module_name in plugin_modules:
+        plugin_modules = {
+            'fastshot.plugin_ocr': 'PluginOCR',
+            'fastshot.plugin_ask': 'PluginAsk'
+        }
+        for module_name, class_name in plugin_modules.items():
             module = importlib.import_module(module_name)
-            plugin_class = getattr(module, 'PluginOCR')
+            plugin_class = getattr(module, class_name)
             self.plugins[module_name] = plugin_class()
 
     def setup_hotkey_listener(self):

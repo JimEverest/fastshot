@@ -1,0 +1,1082 @@
+以下代码是我基于Python实现的一个Windows系统下的快速截图工具fastshot。 
+
+Fastshot is an open-source Python-based screenshot tool for Windows, inspired by Snipaste.
+It provides a versatile and user-friendly interface for capturing and annotating screenshots, making it ideal for research, reading papers, writing code, and various comparison and demonstration scenarios.
+
+Features:
+Always on Top: Screenshots stay on top, allowing easy comparison.
+Smooth Zoom and Drag: Effortlessly zoom and drag screenshots.
+Annotation Tools: Hand-drawing and text mode for annotations.
+Clipboard Export: Easily export screenshots to the clipboard.
+OCR Integration: Extract text from images using the built-in OCR plugin powered by PaddleOCR.
+
+Hotkeys
+Shift+A+S: Activate screen capturing mode.
+Ctrl+P: Activate paint mode.
+Ctrl+T: Activate text mode.
+Esc: Exit the current mode.
+
+Right-Click Menu
+❌ Close: Close the current window.
+💾 Save As...: Save the current screenshot.
+🖌️ Paint: Activate paint mode.
+↩️ Undo: Undo the last action.
+🚪 Exit Edit: Exit paint or text mode.
+📋 Copy: Copy the current screenshot to the clipboard.
+🔤 Text: Activate text mode.
+🔍 OCR: Perform OCR on the current screenshot and copy the result to the clipboard.
+
+目前项目的文件目录结构如下：
+├── fastshot
+│   ├──__init__.py
+│   ├── config.ini
+│   ├── image_window.py
+│   ├── main.py
+│   ├── paint_tool.py
+│   ├── plugin_ocr.py
+│   ├── snipping_tool.py
+│   ├── text_tool.py
+│   ├── window_control.py
+├── .github
+│   ├── workflows
+│           ├── python-publish.yml
+├── run.py
+├── setup.py
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+├── LICENSE
+
+一些关键文件如下：
+=================== fastshot/config.ini ===================
+[Paths]
+download_url = https://raw.githubusercontent.com/JimEverest/ppocr_v4_models/main/.paddleocr.zip
+
+[Shortcuts]
+hotkey_snip = <shift>+a+s
+hotkey_paint = <ctrl>+p
+hotkey_text = <ctrl>+t
+
+
+hotkey_screenpen_toggle = <ctrl>+<cmd>+<alt>
+hotkey_undo = <ctrl>+z
+hotkey_redo = <ctrl>+y
+hotkey_screenpen_exit = <esc>
+hotkey_screenpen_clear_hide = <ctrl>+<esc>
+
+hotkey_topmost_on = <esc>+`
+; optional as hotkey_topmost_on is switching between on and off
+hotkey_topmost_off = <cmd>+<shift>+\
+
+hotkey_opacity_down = <left>+<right>+<down>
+hotkey_opacity_up = <left>+<right>+<up>
+
+=================== run.py ===================
+from fastshot.main import main
+if __name__ == "__main__":
+    main()
+
+
+=================== fastshot/main.py ===================
+import os
+if os.name == 'nt':
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
+    except Exception as e:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception as e:
+            print(f"无法设置DPI感知: {e}")
+
+import tkinter as tk
+from pynput import keyboard
+from screeninfo import get_monitors
+import ctypes
+import importlib
+import os
+import configparser
+import urllib.request
+import zipfile
+import shutil
+from fastshot.snipping_tool import SnippingTool
+from fastshot.image_window import ImageWindow
+from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
+from fastshot.window_control import HotkeyListener, load_config
+
+class SnipasteApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.monitors = get_monitors()
+        self.snipping_tool = SnippingTool(self.root, self.monitors, self.on_screenshot)
+        self.windows = []
+        self.plugins = {}
+        self.config = self.load_config()
+        self.print_config_info()
+        self.check_and_download_models()
+        self.load_plugins()
+        self.setup_hotkey_listener()
+        listener = HotkeyListener(self.config)
+        listener.start()
+
+
+        # 初始化 ScreenPen
+        enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)
+        if enable_screenpen:
+            self.screen_pen = ScreenPen(self.root, self.config)
+            self.screen_pen.start_keyboard_listener()
+        else:
+            self.screen_pen = None
+
+    def load_config(self):
+        config = configparser.ConfigParser()
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
+        if not os.path.exists(config_path):
+            # 创建默认的配置文件
+            config['Paths'] = {
+                'download_url': 'https://raw.githubusercontent.com/JimEverest/ppocr_v4_models/main/.paddleocr.zip'
+            }
+            config['Shortcuts'] = {
+                'hotkey_snip': '<shift>+a+s',
+                'hotkey_paint': '<ctrl>+p',
+                'hotkey_text': '<ctrl>+t',
+                'hotkey_screenpen_toggle': '<ctrl>+x+c',
+                'hotkey_undo': '<ctrl>+z',
+                'hotkey_redo': '<ctrl>+y',
+                'hotkey_screenpen_exit': '<esc>',
+                'hotkey_screenpen_clear_hide': '<ctrl>+<esc>'
+            }
+            config['ScreenPen'] = {
+                'enable_screenpen': 'True',
+                'pen_color': 'red',
+                'pen_width': '3',
+                'smooth_factor': '3'
+            }
+            with open(config_path, 'w', encoding='utf-8') as configfile:
+                config.write(configfile)
+        else:
+            config.read(config_path, encoding='utf-8')
+        self.config_path = config_path
+        return config
+
+    def print_config_info(self):
+        print(f"配置文件路径: {self.config_path}")
+        print("快捷键设置:")
+        shortcut_descriptions = {
+            'hotkey_snip': '启动截图',
+            'hotkey_paint': '启用画笔模式',
+            'hotkey_text': '启用文字模式',
+            'hotkey_screenpen_toggle': '切换屏幕画笔模式',
+            'hotkey_undo': '撤销上一步',
+            'hotkey_redo': '重做上一步',
+            'hotkey_screenpen_exit': '退出屏幕画笔模式',
+            'hotkey_screenpen_clear_hide': '清除画笔并隐藏'
+        }
+        for key, desc in shortcut_descriptions.items():
+            value = self.config['Shortcuts'].get(key, '')
+            print(f"{desc}: {value}")
+
+    def check_and_download_models(self):
+        home_dir = os.path.expanduser('~')  # C:\Users\xxxxxxx/
+        paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')  # C:\Users\xxxxxxx/.paddleocr/whl/
+        model_dirs = [
+            os.path.join(paddleocr_dir, 'det', 'ch', 'ch_PP-OCRv4_det_infer'),  # C:\Users\xxxxxxx/.paddleocr/whl/det/ch/ch_PP-OCRv4_det_infer/
+            os.path.join(paddleocr_dir, 'rec', 'ch', 'ch_PP-OCRv4_rec_infer'),  # C:\Users\xxxxxxx/.paddleocr/whl/rec/ch/ch_PP-OCRv4_rec_infer/
+            os.path.join(paddleocr_dir, 'cls', 'ch_ppocr_mobile_v2.0_cls_infer')  # C:\Users\xxxxxxx/.paddleocr/whl/cls/ch_ppocr_mobile_v2.0_cls_infer/
+        ]
+        models_exist = all(os.path.exists(model_dir) for model_dir in model_dirs)
+        
+        if not models_exist:
+            print("未找到 PaddleOCR 模型文件，尝试从本地拷贝...")
+            zip_path = os.path.join(home_dir, '.paddleocr.zip')
+            local_resource_zip = os.path.join(os.path.dirname(__file__), 'resources', 'paddleocr.zip')
+            
+            try:
+                # 尝试从 resources 目录拷贝 paddleocr.zip
+                shutil.copy(local_resource_zip, zip_path)
+                print("从本地 resources 目录拷贝成功，正在解压...")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(home_dir)
+                print("模型文件解压完成。")
+                os.remove(zip_path)
+            except Exception as e:
+                print(f"从本地拷贝失败: {e}，开始从网络下载...")
+                download_url = self.config['Paths'].get('download_url')  # 从配置文件中获取下载链接
+                try:
+                    urllib.request.urlretrieve(download_url, zip_path)
+                    print("下载完成，正在解压...")
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(home_dir)
+                    print("模型文件解压完成。")
+                    os.remove(zip_path)
+                except Exception as e:
+                    print(f"下载和解压模型文件失败: {e}")
+        else:
+            print("PaddleOCR 模型文件已存在。")
+            
+
+    def load_plugins(self):
+        plugin_modules = ['fastshot.plugin_ocr']  # 可以在此添加更多插件模块
+        for module_name in plugin_modules:
+            module = importlib.import_module(module_name)
+            plugin_class = getattr(module, 'PluginOCR')
+            self.plugins[module_name] = plugin_class()
+
+    def setup_hotkey_listener(self):
+        def on_activate_snip():
+            print("截图快捷键已激活")
+            self.snipping_tool.start_snipping()
+
+        def on_escape():
+            self.exit_all_modes()
+
+        def for_canonical(f):
+            return lambda k: f(self.listener.canonical(k))
+
+        # 从配置文件获取快捷键
+        hotkey_snip_str = self.config['Shortcuts'].get('hotkey_snip', '<shift>+a+s')
+        hotkey_snip = keyboard.HotKey(keyboard.HotKey.parse(hotkey_snip_str), on_activate_snip)
+
+        self.listener = keyboard.Listener(
+            on_press=for_canonical(hotkey_snip.press),
+            on_release=for_canonical(hotkey_snip.release))
+        self.listener.start()
+
+        self.listener_escape = keyboard.Listener(
+            on_press=for_canonical(lambda key: on_escape() if key == keyboard.Key.esc else None))
+        self.listener_escape.start()
+
+    def start_screen_pen_listener(self):
+        # 启动 ScreenPen 的键盘监听器线程
+        keyboard_thread = threading.Thread(target=self.screen_pen.start_keyboard_listener)
+        keyboard_thread.daemon = True
+        keyboard_thread.start()
+
+    def on_screenshot(self, img):
+        window = ImageWindow(self, img, self.config)
+        self.windows.append(window)
+
+    def exit_all_modes(self):
+        for window in self.windows:
+            if window.img_window.winfo_exists():
+                window.exit_edit_mode()
+
+    def run(self):
+        self.root.mainloop()
+
+def main():
+    app = SnipasteApp()
+    app.run()
+
+if __name__ == "__main__":
+    main()
+
+=================== fastshot/image_window.py ===================
+
+import tkinter as tk
+from tkinter import filedialog
+from PIL import Image, ImageTk, ImageDraw, ImageFont
+import io
+import win32clipboard
+from pynput import keyboard
+
+from .paint_tool import PaintTool
+from .text_tool import TextTool
+
+class ImageWindow:
+    def __init__(self, app, img, config):
+        self.app = app
+        self.config = config
+        self.root = app.root
+        self.img_window = tk.Toplevel(self.root)
+        self.img_window.overrideredirect(True)
+        self.img_window.attributes('-topmost', True)
+        self.img_window.bind('<ButtonPress-1>', self.start_move)
+        self.img_window.bind('<B1-Motion>', self.do_move)
+        self.img_window.bind('<Button-3>', self.show_context_menu)
+        self.img_window.bind('<MouseWheel>', self.zoom)
+        self.img_window.bind('<Enter>', self.activate_window)
+
+        self.img_label = tk.Label(self.img_window, borderwidth=1, relief="solid")
+        self.img_label.pack()
+        self.update_image(img)
+
+        self.paint_tool = PaintTool(self)
+        self.text_tool = TextTool(self)
+        self.draw_history = []
+
+        self.setup_hotkey_listener()
+
+    def setup_hotkey_listener(self):
+        def on_activate_paint():
+            self.app.exit_all_modes()
+            if self.img_window.winfo_exists():
+                self.paint_tool.enable_paint_mode()
+
+        def on_activate_text():
+            self.app.exit_all_modes()
+            if self.img_window.winfo_exists():
+                self.text_tool.enable_text_mode()
+
+        def for_canonical(f):
+            return lambda k: f(self.listener.canonical(k))
+
+        # 从配置文件获取快捷键
+        hotkey_paint_str = self.config['Shortcuts'].get('hotkey_paint', '<ctrl>+p')
+        hotkey_text_str = self.config['Shortcuts'].get('hotkey_text', '<ctrl>+t')
+
+        hotkey_paint = keyboard.HotKey(keyboard.HotKey.parse(hotkey_paint_str), on_activate_paint)
+        hotkey_text = keyboard.HotKey(keyboard.HotKey.parse(hotkey_text_str), on_activate_text)
+
+        self.listener = keyboard.Listener(
+            on_press=for_canonical(hotkey_paint.press),
+            on_release=for_canonical(hotkey_paint.release))
+        self.listener.start()
+
+        self.listener_text = keyboard.Listener(
+            on_press=for_canonical(hotkey_text.press),
+            on_release=for_canonical(hotkey_text.release))
+        self.listener_text.start()
+
+    def set_paint_tool(self, paint_tool):
+        if self.paint_tool and self.paint_tool != paint_tool:
+            self.paint_tool.disable_paint_mode()
+        self.paint_tool = paint_tool
+
+    def set_text_tool(self, text_tool):
+        if self.text_tool and self.text_tool != text_tool:
+            self.text_tool.disable_text_mode()
+        self.text_tool = text_tool
+
+    def update_image(self, img):
+        self.img_label.original_image = img
+        self.img_label.zoomed_image = img.copy()
+        self.img_label.scale = 1.0
+        self.img_label.image = ImageTk.PhotoImage(img)
+        self.img_label.config(image=self.img_label.image)
+
+    def start_move(self, event):
+        if not self.paint_tool.painting and not self.text_tool.text_mode:
+            self.img_window._drag_data = {"x": event.x, "y": event.y}
+
+    def do_move(self, event):
+        if not self.paint_tool.painting and not self.text_tool.text_mode:
+            x = self.img_window.winfo_x() + event.x - self.img_window._drag_data["x"]
+            y = self.img_window.winfo_y() + event.y - self.img_window._drag_data["y"]
+            self.img_window.geometry(f"+{x}+{y}")
+
+    def show_context_menu(self, event):
+        menu = tk.Menu(self.img_window, tearoff=0)
+
+        # 使用 Unicode 字符作为图标
+        icons = {
+            "Copy": "📋",
+            "Close": "❌",
+            "Save As...": "💾",
+            "Paint": "🖌️",
+            "Undo": "↩️",
+            "Exit Edit": "🚪",
+            "Text": "🔤",
+            "OCR": "🔍"
+        }
+
+        commands = {
+            "Copy": self.copy,
+            "Close": self.close,
+            "Save As...": self.save_as,
+            "Paint": self.paint,
+            "Undo": self.undo,
+            "Exit Edit": self.exit_edit_mode,
+            "Text": self.text,
+            "OCR": self.ocr
+        }
+
+        for label, icon in icons.items():
+            menu.add_command(label=f"{icon} {label}", command=commands[label])
+
+        menu.post(event.x_root, event.y_root)
+
+    def close(self):
+        self.img_window.destroy()
+        self.app.windows.remove(self)
+
+    def save_as(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")])
+        if file_path:
+            self.img_label.zoomed_image.save(file_path)
+
+    def paint(self):
+        self.paint_tool.enable_paint_mode()
+
+    def undo(self):
+        self.paint_tool.undo_last_draw()
+
+    def exit_edit_mode(self):
+        if self.img_window.winfo_exists():
+            self.paint_tool.disable_paint_mode()
+            self.text_tool.disable_text_mode()
+
+    def copy(self):
+        output = io.BytesIO()
+        self.img_label.zoomed_image.save(output, format='BMP')
+        data = output.getvalue()[14:]
+        output.close()
+
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+        win32clipboard.CloseClipboard()
+
+    def text(self):
+        self.text_tool.enable_text_mode()
+
+    def ocr(self):
+        plugin = self.app.plugins.get('fastshot.plugin_ocr')
+        if plugin:
+            img_path = 'temp.png'
+            self.img_label.zoomed_image.save(img_path)
+            result = plugin.ocr(img_path)
+            plugin.show_message("OCR result updated in clipboard", self.img_window)
+
+    def zoom(self, event):
+        scale_factor = 1.1 if event.delta > 0 else 0.9
+        self.img_label.scale *= scale_factor
+        new_width = int(self.img_label.original_image.width * self.img_label.scale)
+        new_height = int(self.img_label.original_image.height * self.img_label.scale)
+        self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
+        self.redraw_image()
+
+    def redraw_image(self):
+        self.img_label.zoomed_image = self.img_label.original_image.resize(
+            (int(self.img_label.original_image.width * self.img_label.scale),
+             int(self.img_label.original_image.height * self.img_label.scale)),
+            Image.LANCZOS
+        )
+        draw = ImageDraw.Draw(self.img_label.zoomed_image)
+        for item in self.draw_history:
+            if isinstance(item, list):  # 画线的历史记录
+                for (x1, y1, x2, y2) in item:
+                    scaled_x1 = int(x1 * self.img_label.scale)
+                    scaled_y1 = int(y1 * self.img_label.scale)
+                    scaled_x2 = int(x2 * self.img_label.scale)
+                    scaled_y2 = int(y2 * self.img_label.scale)
+                    draw.line((scaled_x1, scaled_y1, scaled_x2, scaled_y2), fill="red", width=3)
+            elif isinstance(item, tuple) and item[0] == 'text':  # 文字的历史记录
+                _, scaled_x, scaled_y, text = item
+                font = ImageFont.truetype("arial", size=int(28 * self.img_label.scale))
+                draw.text((int(scaled_x * self.img_label.scale), int(scaled_y * self.img_label.scale)),
+                          text, fill="red", font=font)
+        self.img_label.image = ImageTk.PhotoImage(self.img_label.zoomed_image)
+        self.img_label.config(image=self.img_label.image)
+
+    def activate_window(self, event):
+        self.app.exit_all_modes()
+
+
+
+=================== fastshot/snipping_tool.py ===================
+
+import tkinter as tk
+from PIL import Image
+import mss
+import mss.tools
+import io
+
+class SnippingTool:
+    def __init__(self, root, monitors, on_screenshot):
+        self.root = root
+        self.monitors = monitors
+        self.on_screenshot = on_screenshot
+        self.overlays = []
+        self.canvases = []
+        self.rects = []
+
+    def start_snipping(self):
+        self.snipping = True
+        self.overlays = []
+        self.canvases = []
+        self.rects = []
+
+        for monitor in self.monitors:
+            overlay = tk.Toplevel(self.root)
+            overlay.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
+            overlay.configure(bg='blue')
+            overlay.attributes('-alpha', 0.3)
+            overlay.bind('<Escape>', self.exit_snipping)
+
+            canvas = tk.Canvas(overlay, cursor="cross")
+            canvas.pack(fill=tk.BOTH, expand=tk.TRUE)
+            canvas.bind('<ButtonPress-1>', self.on_mouse_down)
+            canvas.bind('<B1-Motion>', self.on_mouse_drag)
+            canvas.bind('<ButtonRelease-1>', self.on_mouse_up)
+
+            self.overlays.append(overlay)
+            self.canvases.append(canvas)
+            self.rects.append(None)
+
+        self.root.update_idletasks()
+        self.root.update()
+
+        self.start_x = self.start_y = self.end_x = self.end_y = 0
+
+    def exit_snipping(self, event=None):
+        self.snipping = False
+        for overlay in self.overlays:
+            overlay.destroy()
+
+    def on_mouse_down(self, event):
+        self.start_x = event.x_root
+        self.start_y = event.y_root
+        for i in range(len(self.rects)):
+            self.rects[i] = None
+
+    def on_mouse_drag(self, event):
+        for i, canvas in enumerate(self.canvases):
+            if self.rects[i]:
+                canvas.delete(self.rects[i])
+            self.rects[i] = canvas.create_rectangle(
+                self.start_x - canvas.winfo_rootx(),
+                self.start_y - canvas.winfo_rooty(),
+                event.x_root - canvas.winfo_rootx(),
+                event.y_root - canvas.winfo_rooty(),
+                outline='red'
+            )
+
+    def on_mouse_up(self, event):
+        self.end_x = event.x_root
+        self.end_y = event.y_root
+        self.take_screenshot()
+        self.exit_snipping()
+
+    def take_screenshot(self):
+        x1 = min(self.start_x, self.end_x)
+        y1 = min(self.start_y, self.end_y)
+        x2 = max(self.start_x, self.end_x)
+        y2 = max(self.start_y, self.end_y)
+
+        for overlay in self.overlays:
+            overlay.withdraw()
+
+        with mss.mss() as sct:
+            monitor = {
+                "top": y1,
+                "left": x1,
+                "width": x2 - x1,
+                "height": y2 - y1
+            }
+            screenshot = sct.grab(monitor)
+            img = mss.tools.to_png(screenshot.rgb, screenshot.size)
+
+        for overlay in self.overlays:
+            overlay.deiconify()
+
+        img = Image.open(io.BytesIO(img))
+        img = img.convert('RGB')
+        self.on_screenshot(img)
+
+
+
+=================== fastshot/plugin_ocr.py ===================
+from paddleocr import PaddleOCR
+from PIL import Image
+import win32clipboard
+import tkinter as tk
+
+class PluginOCR:
+    def __init__(self):
+        self.ocr_engine = PaddleOCR(use_angle_cls=True, lang='ch')
+
+    def ocr(self, image):
+        result = self.ocr_engine.ocr(image, cls=True)
+        ocr_text = "\n".join([line[1][0] for res in result for line in res])
+        self.copy_to_clipboard(ocr_text)
+        return ocr_text
+
+    def copy_to_clipboard(self, text):
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+
+    def show_message(self, message, parent):
+        label = tk.Label(parent, text=message, bg="yellow", fg="black", font=("Helvetica", 10))
+        label.pack(side="bottom", fill="x")
+        parent.after(3000, label.destroy)
+
+=================== fastshot/text_tool.py ===================
+import tkinter as tk
+from PIL import ImageDraw, ImageFont
+
+class TextTool:
+    def __init__(self, image_window):
+        self.image_window = image_window
+        self.text_mode = False
+
+    def enable_text_mode(self):
+        if self.image_window.paint_tool:
+            self.image_window.paint_tool.disable_paint_mode()
+        self.text_mode = True
+        img_label = self.image_window.img_label
+        if img_label:
+            img_label.bind('<Button-1>', self.add_text_entry)
+        if self.image_window.root:
+            self.image_window.root.bind_all('<Escape>', self.disable_text_mode)
+            self.image_window.root.bind_all('<Control-z>', self.undo_last_text)
+        img_label.config(cursor="xterm")
+        self.image_window.set_text_tool(self)  # 设置当前 TextTool 实例为活动的文字工具
+
+    def disable_text_mode(self, event=None):
+        self.text_mode = False
+        img_label = self.image_window.img_label
+        if img_label:
+            img_label.unbind('<Button-1>')
+        if self.image_window.root:
+            self.image_window.root.unbind_all('<Escape>')
+            self.image_window.root.unbind_all('<Control-z>')
+        img_label.config(cursor="arrow")
+
+    def add_text_entry(self, event):
+        if self.text_mode:
+            x, y = event.x, event.y
+            entry = tk.Entry(self.image_window.img_window, font=("Arial", 28), fg="red", bd=0, highlightthickness=0, insertbackground="red")
+            entry.place(x=x, y=y)
+            entry.bind('<Return>', lambda e: self.save_text(entry, x, y))
+            entry.bind('<FocusOut>', lambda e: self.save_text(entry, x, y))
+            entry.focus()
+            self.text_entry = entry
+
+    def save_text(self, entry, x, y):
+        text = entry.get()
+        entry.destroy()
+        if text:
+            scaled_x = x / self.image_window.img_label.scale
+            scaled_y = y / self.image_window.img_label.scale
+            self.image_window.draw_history.append(('text', scaled_x, scaled_y, text))
+            self.image_window.redraw_image()
+
+    def undo_last_text(self, event=None):
+        if self.image_window.draw_history:
+            for i in range(len(self.image_window.draw_history) - 1, -1, -1):
+                if isinstance(self.image_window.draw_history[i], tuple) and self.image_window.draw_history[i][0] == 'text':
+                    del self.image_window.draw_history[i]
+                    break
+            self.image_window.redraw_image()
+
+=================== fastshot/paint_tool.py ===================
+
+import tkinter as tk
+from PIL import ImageDraw
+
+class PaintTool:
+    def __init__(self, image_window):
+        self.image_window = image_window
+        self.painting = False
+        self.last_x = self.last_y = None
+
+    def enable_paint_mode(self):
+        if self.image_window.text_tool:
+            self.image_window.text_tool.disable_text_mode()
+        self.painting = True
+        img_label = self.image_window.img_label
+        if img_label:
+            img_label.bind('<B1-Motion>', self.paint)
+            img_label.bind('<ButtonPress-1>', self.on_mouse_down)
+        if self.image_window.root:
+            self.image_window.root.bind_all('<Escape>', self.disable_paint_mode)
+            self.image_window.root.bind_all('<Control-z>', self.undo_last_draw)
+        img_label.config(cursor="pencil")
+        self.image_window.set_paint_tool(self)  # 设置当前 PaintTool 实例为活动的绘图工具
+
+    def disable_paint_mode(self, event=None):
+        self.painting = False
+        img_label = self.image_window.img_label
+        if img_label:
+            img_label.unbind('<B1-Motion>')
+            img_label.unbind('<ButtonPress-1>')
+        if self.image_window.root:
+            self.image_window.root.unbind_all('<Escape>')
+            self.image_window.root.unbind_all('<Control-z>')
+        img_label.config(cursor="arrow")
+
+    def on_mouse_down(self, event):
+        self.last_x, self.last_y = event.x, event.y
+        # 检查最后一项是否为列表，如果不是则添加一个新列表
+        if not self.image_window.draw_history or not isinstance(self.image_window.draw_history[-1], list):
+            self.image_window.draw_history.append([])
+
+    def paint(self, event):
+        if self.painting:
+            img_label = self.image_window.img_label
+            x, y = event.x, event.y
+            scaled_last_x = self.last_x / img_label.scale
+            scaled_last_y = self.last_y / img_label.scale
+            scaled_x = x / img_label.scale
+            scaled_y = y / img_label.scale
+            self.image_window.draw_history[-1].append((scaled_last_x, scaled_last_y, scaled_x, scaled_y))
+            self.last_x, self.last_y = x, y
+            self.image_window.redraw_image()
+
+    def undo_last_draw(self, event=None):
+        if self.image_window.draw_history:
+            self.image_window.draw_history.pop()
+            self.image_window.redraw_image()
+
+
+
+=================== New feature required: ===================
+
+现在我要实现一个新需求，即在右键菜单中加入Ask功能，用户可以针对当前激活截图询问问题（支持多轮对话问答），程序会自动调用OpenAI的多模态GPT4模型，生成答案并显示在屏幕上。 
+
+因为需要用户提出问题并显示答案， 多以需要一个Dialog以及一些UI交互元素。 这几张图是我设计的Dialog的草图。
+
+1. 击右键菜单中的ASK后弹出的Dialog，  用户可以在这里输入问题 如图2）
+2. 点击submit后，问题以及图片会发送给一个ask_dummy函数，这个函数暂时会返回一个随机的回答（模拟Long running task，10s 完成）（如图2）
+3. 点击Submit后， user icon以及提问内容会显示在Dialog中。 后端服务完成回答并返回答案后， 将答案显示在Dialog中（Copilot图标）（如图2）
+4. 支持多轮对话，用户可以多次提问，每次提问后， Dialog中会追加用户的提问内容和回答内容。（如图4）
+5. cancel按钮可以最小化Dialog， 但不会关闭Dialog。 dialog最小化后， 当前被提问图片右上角会有一个小的Dialog icon， 点击这个icon可以再次打开Dialog。（如图3）
+6. clean按钮可以清除所有对话内容并关闭Dialog， 图片右上角不会出现Dialog icon
+7. Dialog右上角有三个按钮， 分别是最小化，最大化和关闭按钮(clean)
+8. Dialog最大高度不超过1000像素。 如果内容部分超出，则出现滚动条。
+9. 截图图像的移动和缩放功能在Dialog打开时不可用， Dialog关闭或最小化后恢复可用。
+10. 截图被鼠标drag移动的时候， 右上角的Dialog icon也会跟随移动。
+11. 每张截图单独维护Ask Dialog以及问答. 保证每张截图的对话内容不会混淆。
+11. UI设计风格扁平简约大气， 颜色搭配和谐， 字体清晰易读。可以使用现成的UI库和Icon库， 但是需要保证UI风格一致。
+======================================================
+请问你是否理解新需求一次这几张草图？ 请问你是否有任何问题或者需要我解释的地方？
+如果不需要，那么先请你开始整理这些需求，越详细越好， 不要遗漏任何功能和细节。并将这几张草图转换为语言描述清楚。
+我需要用你的清晰描述， 然后我会发送给我的Pair， 但是由于某些特殊原因， 我的Pair看到这几张草图。 所以你的描述需要足够清晰， 他们可以根据你的描述， 完成这个新功能的开发。
+需求整理完成后，请开始方案设计（详细清晰，专业准确）， 请问你是否准备好了？ 如果准备好了， 请开始吧！
+
+
+
+
+
+===========================================================================================
+===========================================================================================
+====================================== O1-Preview =====================================================
+
+
+=================== New feature required: ===================
+
+现在我要实现一个新需求，即在右键菜单中加入Ask功能，用户可以针对当前激活截图询问问题（支持多轮对话问答），程序会自动调用OpenAI的多模态GPT4模型，生成答案并显示在屏幕上。 
+
+因为需要用户提出问题并显示答案， 需要一个Dialog Popup以及一些UI交互元素。
+
+1. 击右键菜单中的ASK后弹出的Dialog，  用户可以在这里输入问题 
+2. 点击submit后，问题以及图片会发送给一个ask_dummy函数，这个函数暂时会返回一个随机的回答（模拟Long running task，10s 完成）
+3. 点击Submit后， user icon以及提问内容会显示在Dialog中。 后端服务完成回答并返回答案后， 将答案显示在Dialog中（Copilot图标）
+4. 支持多轮对话，用户可以多次提问，每次提问后， Dialog中会追加用户的提问内容和回答内容。
+5. cancel按钮可以最小化Dialog， 但不会关闭Dialog。 dialog最小化后， 当前被提问图片右上角会有一个小的Dialog icon， 点击这个icon可以再次打开Dialog。
+6. clean按钮可以清除所有对话内容并关闭Dialog， 图片右上角不会出现Dialog icon
+7. Dialog右上角有三个按钮， 分别是最小化，最大化和关闭按钮(clean)
+8. Dialog最大高度不超过1000像素。 如果内容部分超出，则出现滚动条。
+9. 截图图像的移动和缩放功能在Dialog打开时不可用， Dialog关闭或最小化后恢复可用。
+10. 截图被鼠标drag移动的时候， 右上角的Dialog icon也会跟随移动。
+11. 每张截图单独维护Ask Dialog以及问答. 保证每张截图的对话内容不会混淆。
+11. UI设计风格扁平简约大气， 颜色搭配和谐， 字体清晰易读。可以使用现成的UI库和Icon库， 但是需要保证UI风格一致。
+======================================================
+
+以下是详细的需求整理
+
+~ 目标：为现有的 Fastshot 截图工具加入 "Ask" 功能，允许用户针对当前截图提问，并显示基于 OpenAI GPT-4 的答案，支持多轮对话。该功能需具备友好且现代的用户界面设计，简洁易用
+
+
+~ 功能细节
+
+1. 右键菜单新增 Ask 功能：
+  当用户右键点击截图时，弹出菜单新增 "Ask" 选项。
+  点击 "Ask" 选项后，弹出 对话框 (Dialog)，让用户可以针对当前截图提出问题。
+2.Dialog 界面：
+  Dialog 用于用户输入问题和展示多轮对话，具备如下功能：
+    2.1 输入框：用于用户输入问题，输入框位于对话框底部，支持单行或多行输入。
+    2.2 Submit 按钮：用户输入问题后，点击 Submit 按钮发送问题。
+    2.3 对话框内显示的内容：
+      用户输入问题后，用户头像图标和问题会显示在对话框中，问题上方会有用户图标。
+      后端服务完成回答后，生成的答案以 AI 助手（Copilot 图标）形式显示在对话框内。
+      每轮对话会在对话框中以时间顺序追加，用户提问和 AI 回答交替显示。
+    2.4 滚动条：对话内容超出对话框最大高度时，出现滚动条。最大高度限制为 1000 像素。
+    2.5 多轮对话支持：用户可以多次提问，Dialog 中依次追加用户的提问和 AI 的回答内容。
+3. Dialog 的按钮与操作：
+  3.1 Submit 按钮：点击后提交问题，触发后端 API 调用，并开始显示用户提问内容。
+  3.2 Cancel 按钮：点击 Cancel 后，最小化 Dialog（不关闭），但保留对话内容。最小化后的 Dialog 会在截图的右上角显示一个小的 Dialog 图标，用户可通过点击图标重新打开对话框。
+  3.3 Clean 按钮：点击 Clean 后，清除所有对话内容，并关闭对话框，截图右上角的 Dialog 图标 消失。
+  3.4 窗口控制按钮：
+      最小化按钮：对话框会最小化并悬浮在截图的右上角，显示为小图标。
+      最大化按钮：对话框最大化，适应当前屏幕的大小。
+      关闭按钮：关闭 Dialog，并清除所有内容。
+4. 截图互动禁用：
+  当 Dialog 打开时，截图的移动和缩放功能被禁用，用户无法拖动截图或调整其大小。
+  当 Dialog 最小化或关闭时，恢复截图的移动和缩放功能。
+
+5. Dialog 图标跟随：
+  Dialog 最小化后，截图右上角的 Dialog 图标 会跟随截图移动。当用户拖动截图时，右上角的图标始终保持在截图的右上角。
+6. 设计风格与交互：
+  UI 风格：扁平、简约、大气，符合现代用户界面设计标准。UI 元素清晰，色彩搭配和谐，保证易读性。
+  图标设计：使用现成的图标库（如 FontAwesome），并保持一致的风格，如用户头像、Copilot 图标、小的 Dialog 图标等。
+
+
+
+~详细设计方案
+1. 右键菜单的改动：
+  在现有的右键菜单中，增加 "Ask" 选项，点击后调用打开 Dialog 函数 open_ask_dialog()，并将当前截图的实例传递给对话框。
+
+2. Dialog 设计：
+  窗口布局：Dialog 顶部为标题栏，左上角显示对话框名称“Ask”，右上角为最小化、最大化和关闭按钮。主体部分用于显示对话历史，底部为用户输入区。
+  输入框：用户输入问题后，点击 Submit 按钮触发一个 ask_dummy() 模拟函数（该函数模拟调用 GPT-4 服务，随机返回一个答案并延迟10秒）。
+  多轮对话展示：每次提问后，Dialog 中自动追加对话气泡，显示用户头像和问题内容。AI 回答完成后，Dialog 中追加回答气泡，显示 Copilot 图标和答案。
+  滚动条：在对话超过一定高度后，内容区域会显示滚动条，允许用户上下滚动查看历史对话。
+
+3. 对话框的按钮功能：
+  Submit 按钮：绑定 on_submit_click() 事件，点击时触发问题发送，并在界面中生成用户提问的内容。
+  Cancel 按钮：最小化对话框并调用 minimize_dialog()，生成悬浮图标。
+  Clean 按钮：清空所有对话并调用 clear_and_close()，关闭对话框，移除悬浮图标。
+  窗口控制按钮：实现最小化、最大化和关闭的窗口行为，最大化时适应屏幕大小，关闭时清除所有内容。
+
+4. Dialog 与截图的交互逻辑：
+  禁用截图交互：Dialog 打开时，通过一个布尔标志 is_dialog_open 来控制截图是否可被拖动或缩放。当 is_dialog_open 为 True 时，禁用截图交互，Dialog 最小化或关闭时恢复原有功能。
+  最小化时的悬浮图标：最小化对话框后，在截图右上角显示一个小图标，图标会随着截图拖动而移动。通过 on_drag_move() 方法实现，捕获截图拖动事件并实时更新图标位置。
+  重新打开 Dialog：用户点击悬浮图标时，Dialog 重新打开并恢复其大小和位置，调用 restore_dialog()。
+  每张截图单独维护Ask Dialog以及问答. 保证每张截图的对话内容不会混淆。
+
+5. 模拟 API 调用：
+  在最初阶段，实现 ask_dummy() 模拟函数，以 10 秒延迟返回随机答案。最终阶段需要替换为实际的 GPT-4 模型接口，具体接口调用应包括用户问题和截图图像的 Base64 编码。
+
+6. UI 与图标设计：
+  使用现成的 UI 库（如 Tkinter），并结合图标库（如 FontAwesome）进行设计。
+  Dialog 图标：使用用户头像图标和 Copilot 图标分别代表提问者和回答者。
+  小图标：Dialog 最小化时，右上角显示的 Dialog 图标可以使用简洁明了的气泡或问号图标。
+
+7. API 调用与多轮对话逻辑：
+  每次用户提问会生成一个独立的对话请求，后端 API 返回答案后，答案会被追加到同一个对话框内。对话框滚动条会根据内容自动调整。
+  支持多轮对话，每个提问和回答都保持上下文显示。
+
+
+
+
+~技术建议
+1. UI 库选择：建议使用 Tkinter，结合 PIL 和现有的图标库（如 FontAwesome）进行开发。Tkinter 可以快速实现对话框和按钮逻辑，并支持滚动条、文本框等元素的简单实现。
+2. 异步处理：提交问题后，使用 Threading 或者 asyncio 进行异步处理，模拟长时间的任务（如等待 GPT-4 返回答案），并在后台更新对话内容。
+3. 多轮对话的状态管理：使用一个列表对象维护当前对话内容，每次提问和回答都会向列表中追加新条目，并根据这个列表动态渲染对话框内容。
+4. 截图图像与 API 集成：最终阶段需要将截图内容转为 Base64 格式并与问题一同发送给 GPT-4 模型，获取基于图像和文本的回答。
+5. 悬浮图标实现：通过捕捉截图拖动事件，实现图标的位置跟随移动，并结合 Tkinter 的窗口管理进行最小化效果。
+6. 每张截图单独维护Ask Dialog以及问答. 保证每张截图的对话内容不会混淆。
+
+
+~需求总结
+新功能需要实现的核心包括：
+1. 右键菜单中新增 Ask 选项。
+2. 具有 Submit、Cancel、Clean 按钮的多轮对话框 UI。
+3. 支持提问后显示答案，并允许多轮对话，答案显示在对话框中。
+4. Dialog 最小化时，右上角悬浮图标会跟随截图移动。
+5. 截图操作与对话框状态联动（打开时禁用移动缩放，最小化后恢复）。
+6. UI 界面简约现代，功能齐全。
+
+
+现在请你开始实现这个新功能， 请问你是否有任何问题或者需要我解释的地方？ 如果没有， 那么请开始吧！
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+
+
+有几个问题， 需要你帮我解决：
+
+1. 在点击菜单中的ASK的时候， terminal中报错如下：
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1948, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\image_window.py", line 159, in open_ask_dialog
+    self.ask_dialog = AskDialog(self)
+                      ^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\ask_dialog.py", line 52, in __init__
+    self.user_icon = self.load_icon("user_icon.png")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\ask_dialog.py", line 86, in load_icon
+    icon = icon.resize((30, 30), Image.ANTIALIAS)
+                                 ^^^^^^^^^^^^^^^
+AttributeError: module 'PIL.Image' has no attribute 'ANTIALIAS'
+
+
+2. 在点击ask dialog的submit按钮的时候：
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1948, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\ask_dialog.py", line 114, in on_submit_click
+    self.append_message("You", user_input, self.user_icon)
+                                           ^^^^^^^^^^^^^^
+AttributeError: 'AskDialog' object has no attribute 'user_icon'
+
+3. Dialog最小化后。 点击截图右上角的图标重新打开Dialog的时候， terminal报错如下， 且无法顺利打开Dialog界面
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1948, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+TypeError: AskDialog.maximize_dialog() takes 1 positional argument but 2 were given
+
+
+4. Dialog最小化后。截图无法拖拽移动， 也无法缩放。
+
+
+
+
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+
+还是有若干问题以及需要改进的地方， 请认真，仔细地帮我解决：
+
+
+1. 我在Dialog中提交第一次问题的时候， 用户提问消息前没有显示出User Icon以及“ You:”字样 。 第二次以及之后的提问有显示。
+
+2. Dialog下方的提问区域Input高度太窄了，需要可以显示6行文字的高度。
+
+3. Dialog下方只有submit， 没有Cancel（最小化）和Clean（清楚Dialog内容以及窗口）按钮。请在Input下方显示出三个按钮并实现对应功能。
+
+4. Dialog最小化或者关闭之后， 都无法再拖拽挪动截图了。
+
+5. 一旦点击Dialog右上角的关闭按钮（Dialog窗口Header自带的，windows系统自带）后， 无法再次通过截图右键菜单打开Dialog， terminal报错：
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1948, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\image_window.py", line 165, in open_ask_dialog
+    self.ask_dialog.dialog_window.lift()
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1077, in tkraise
+    self.tk.call('raise', self._w, aboveThis)
+_tkinter.TclError: bad window path name ".!toplevel7.!toplevel"
+
+6. 通过右键菜单中的Close关闭截图的时候， terminal报错如下：
+
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1948, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "D:\AI\fastshot\fastshot\image_window.py", line 136, in close
+    self.ask_dialog.clean_and_close()
+  File "D:\AI\fastshot\fastshot\ask_dialog.py", line 162, in clean_and_close
+    self.image_window.enable_interactions()
+  File "D:\AI\fastshot\fastshot\image_window.py", line 175, in enable_interactions
+    self.img_window.bind('<ButtonPress-1>', self.start_move)
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1448, in bind
+    return self._bind(('bind', self._w), sequence, func, add)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\All Users\anaconda3\Lib\tkinter\__init__.py", line 1402, in _bind
+    self.tk.call(what + (sequence, cmd))
+_tkinter.TclError: bad window path name ".!toplevel3"
+
+
+7. 在Ask Dialog上方， 需要显示出目标截图的缩略图， 等比缩放（最长边不超过300px）
+
+8. Ask dialog不要显示出windows系统自带的header， 并且需要支持拖拽缩放resize
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+
+1. ask dialog乱了，  无法挪动， 无法缩放resize， 也找不到文本输入框， 也没有按钮显示了， 根本无法提问。
+2. ask dialog最小化后，截图依然无法移动（关闭后倒是可以了）
+
+请修改， 并提供一份完整的ask_dialog.py代码。
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+还是有若干问题以及需要改进的地方， 请认真，仔细地帮我解决：
+1. ask dialog中的缩略图显示不完全， 只显示了整个截图的一部分。  需要显示出目标截图的完整缩略图， 最长边不超过300px， 而不是宽300.
+2. ask dialog还是无法通过拖动右下角或者右边进行拉伸resize，请实现这个功能
+3. ask_dummy函数还需要接受当前目标截图（请确保完整）， 并通过一个弹出窗口将这个接收到的图片显示出来（可关闭）
+
+
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+请对每一个ask dialog， 维护一个符合openai completion API格式的messages列表对象, 并在ask_dummy中将其发送到openAI gpt-4v的多模态模型中。
+<!-- sImageData = base64.b64encode(open(sLongImageFn, 'rb').read()).decode('ascii') -->
+
+"messages": [
+    {
+        "role": "system",
+        "content": "You are a helpful assistant."
+    },
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "Describe this picture:"
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{sImageData}",
+                }
+            }
+        ]
+    },
+
+    {
+        "role": "assistant", 
+        "content": "blah blah..."
+    },
+
+    {
+        "role": "user", 
+        "content": 2nd query
+    },
+    {
+        "role": "assistant", 
+        "content": "blah blah..."
+    },
+]
+
+这个列表随用户的提问和AI的回答而变化， 在dialog clean以及关闭后， 列表也随之清除。
+在每一次问题submit后， 会将用户的提问append进入messages列表中，第一次提问的user content不仅仅包括text， 还要包括图像的base64编码。
+ [
+    {
+        "type": "text",
+        "text": "Describe this picture:"
+    },
+    {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:image/jpeg;base64,{sImageData}",
+        }
+    }
+]
+
+在ask_dummy函数中，请弹出一个popup来显示这个message list in json pretty format（for test、debug purpose only）,这个popup可以被关闭
+原来的show_received_image也会继续显示（for test、debug purpose only）
+
+===========================================================================================
+===========================================================================================
+===========================================================================================
+
+
+
+
+
+===========================================================================================
+===========================================================================================
+===========================================================================================

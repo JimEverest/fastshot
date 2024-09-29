@@ -9,7 +9,7 @@ https://github.com/JimEverest/fastshot/releases/new
 填写新版本号，如 v1.0.0，并点击 Publish release。
 
 
-pip install --upgrade fastshot==1.0.2
+pip install --upgrade fastshot==1.0.4
 
 https://pypi.org/project/fastshot/
 

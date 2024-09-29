@@ -7,6 +7,7 @@ from pynput import keyboard
 
 from .paint_tool import PaintTool
 from .text_tool import TextTool
+from .ask_dialog import AskDialog  # 导入 AskDialog 类
 
 class ImageWindow:
     def __init__(self, app, img, config):
@@ -29,6 +30,8 @@ class ImageWindow:
         self.paint_tool = PaintTool(self)
         self.text_tool = TextTool(self)
         self.draw_history = []
+        self.ask_dialog = None  # 添加 AskDialog 的实例变量
+        self.is_dialog_open = False  # 用于禁用截图交互
 
         self.setup_hotkey_listener()
 
@@ -85,10 +88,13 @@ class ImageWindow:
             self.img_window._drag_data = {"x": event.x, "y": event.y}
 
     def do_move(self, event):
-        if not self.paint_tool.painting and not self.text_tool.text_mode:
+        if not self.paint_tool.painting and not self.text_tool.text_mode and not self.is_dialog_open:
             x = self.img_window.winfo_x() + event.x - self.img_window._drag_data["x"]
             y = self.img_window.winfo_y() + event.y - self.img_window._drag_data["y"]
             self.img_window.geometry(f"+{x}+{y}")
+            # 更新对话图标的位置
+            if self.ask_dialog and self.ask_dialog.is_minimized:
+                self.ask_dialog.update_dialog_icon_position()
 
     def show_context_menu(self, event):
         menu = tk.Menu(self.img_window, tearoff=0)
@@ -102,7 +108,8 @@ class ImageWindow:
             "Undo": "↩️",
             "Exit Edit": "🚪",
             "Text": "🔤",
-            "OCR": "🔍"
+            "OCR": "🔍",
+            "Ask": "❓"  # 新增 Ask 选项
         }
 
         commands = {
@@ -113,7 +120,8 @@ class ImageWindow:
             "Undo": self.undo,
             "Exit Edit": self.exit_edit_mode,
             "Text": self.text,
-            "OCR": self.ocr
+            "OCR": self.ocr,
+            "Ask": self.open_ask_dialog  # 新增 Ask 命令
         }
 
         for label, icon in icons.items():
@@ -122,6 +130,8 @@ class ImageWindow:
         menu.post(event.x_root, event.y_root)
 
     def close(self):
+        if self.ask_dialog and self.ask_dialog.dialog_window and self.ask_dialog.dialog_window.winfo_exists():
+            self.ask_dialog.clean_and_close()
         self.img_window.destroy()
         self.app.windows.remove(self)
 
@@ -142,6 +152,33 @@ class ImageWindow:
         if self.img_window.winfo_exists():
             self.paint_tool.disable_paint_mode()
             self.text_tool.disable_text_mode()
+
+    # 新增方法
+    def open_ask_dialog(self):
+        if self.ask_dialog and self.ask_dialog.dialog_window and self.ask_dialog.dialog_window.winfo_exists():
+            if self.ask_dialog.is_minimized:
+                self.ask_dialog.maximize_dialog()
+            else:
+                self.ask_dialog.dialog_window.lift()
+        else:
+            self.ask_dialog = AskDialog(self)
+            self.is_dialog_open = True
+
+    def disable_interactions(self):
+        # 禁用截图的移动和缩放功能
+        self.img_window.unbind('<ButtonPress-1>')
+        self.img_window.unbind('<B1-Motion>')
+        self.img_window.unbind('<MouseWheel>')
+
+    def enable_interactions(self):
+        # 恢复截图的移动和缩放功能
+        self.img_window.bind('<ButtonPress-1>', self.start_move)
+        self.img_window.bind('<B1-Motion>', self.do_move)
+        self.img_window.bind('<MouseWheel>', self.zoom)
+
+
+
+
 
     def copy(self):
         output = io.BytesIO()
@@ -166,12 +203,13 @@ class ImageWindow:
             plugin.show_message("OCR result updated in clipboard", self.img_window)
 
     def zoom(self, event):
-        scale_factor = 1.1 if event.delta > 0 else 0.9
-        self.img_label.scale *= scale_factor
-        new_width = int(self.img_label.original_image.width * self.img_label.scale)
-        new_height = int(self.img_label.original_image.height * self.img_label.scale)
-        self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
-        self.redraw_image()
+        if not self.is_dialog_open:
+            scale_factor = 1.1 if event.delta > 0 else 0.9
+            self.img_label.scale *= scale_factor
+            new_width = int(self.img_label.original_image.width * self.img_label.scale)
+            new_height = int(self.img_label.original_image.height * self.img_label.scale)
+            self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
+            self.redraw_image()
 
     def redraw_image(self):
         self.img_label.zoomed_image = self.img_label.original_image.resize(
