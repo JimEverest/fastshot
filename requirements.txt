@@ -9,3 +9,4 @@ pywin32,
 paddleocr,
 paddlepaddle,
 pywin32,
+customtkinter
