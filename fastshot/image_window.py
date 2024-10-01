@@ -104,12 +104,12 @@ class ImageWindow:
             "Copy": "📋",
             "Close": "❌",
             "Save As...": "💾",
-            "Paint": "🖌️",
-            "Undo": "↩️",
+            "Paint": "🎨",
+            "Undo": "↺",
             "Exit Edit": "🚪",
             "Text": "🔤",
-            "OCR": "🔍",
-            "Ask": "❓"  # 新增 Ask 选项
+            "OCR": "🧾",
+            "Ask": "💬"  # 新增 Ask 选项
         }
 
         commands = {

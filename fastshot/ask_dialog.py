@@ -4,7 +4,6 @@ import tkinter as tk
 from PIL import ImageTk, Image
 import threading
 import time
-import random
 import os
 import base64
 import json
@@ -18,8 +17,8 @@ class AskDialog:
         self.dialog_icon = None
 
         # Initialize customtkinter
-        ctk.set_appearance_mode("Dark")  # Modes: "System" (default), "Dark", "Light"
-        ctk.set_default_color_theme("dark-blue")  # Themes: "blue" (default), "dark-blue", "green"
+        ctk.set_appearance_mode("Dark")  # Modes: "System", "Dark", "Light"
+        ctk.set_default_color_theme("dark-blue")  # Themes: "blue", "dark-blue", "green"
 
         # Create the main dialog window
         self.dialog_window = ctk.CTkToplevel()
@@ -27,6 +26,12 @@ class AskDialog:
         self.dialog_window.geometry("600x800")
         self.dialog_window.minsize(400, 600)
         self.dialog_window.attributes('-topmost', True)
+
+        # Hide system window decorations
+        self.dialog_window.overrideredirect(True)
+
+        # Create custom title bar
+        self.create_title_bar()
 
         # Disable interactions with the image window while the dialog is open
         self.image_window.disable_interactions()
@@ -48,6 +53,100 @@ class AskDialog:
         # Handle window close event
         self.dialog_window.protocol("WM_DELETE_WINDOW", self.clean_and_close)
 
+    def create_title_bar(self):
+        # Create custom title bar
+        self.title_bar = ctk.CTkFrame(self.dialog_window, height=40)
+        self.title_bar.pack(fill=tk.X)
+
+        # Load icons for the title bar
+        self.icon_image = self.load_icon("title_icon.png", size=(20, 20))
+        self.minimize_icon = self.load_icon("minimize_icon.png", size=(16, 16))
+        self.close_icon = self.load_icon("close_icon.png", size=(16, 16))
+
+        # Icon label
+        self.icon_label = ctk.CTkLabel(self.title_bar, image=self.icon_image, text="")
+        self.icon_label.pack(side=tk.LEFT, padx=(12, 0))
+
+        # Title label
+        self.title_label = ctk.CTkLabel(
+            self.title_bar,
+            text="Ask Dialog",
+            anchor='w',
+            font=("Arial", 14)
+        )
+        self.title_label.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Spacer to push buttons to the right
+        self.title_bar_spacer = ctk.CTkLabel(self.title_bar, text="")
+        self.title_bar_spacer.pack(side=tk.LEFT, expand=True)
+
+        # Minimize button with icon
+        if self.minimize_icon:
+            self.minimize_button = ctk.CTkButton(
+                self.title_bar,
+                image=self.minimize_icon,
+                text="",
+                width=30,
+                height=30,
+                command=self.minimize_dialog,
+                fg_color="transparent",
+                hover_color="#3A3A3A"
+            )
+        else:
+            self.minimize_button = ctk.CTkButton(
+                self.title_bar,
+                text="_",
+                width=30,
+                height=30,
+                command=self.minimize_dialog,
+                fg_color="transparent",
+                hover_color="#3A3A3A"
+            )
+        self.minimize_button.pack(side=tk.RIGHT, padx=(0, 5), pady=5)
+
+        # Close button with icon
+        if self.close_icon:
+            self.close_button = ctk.CTkButton(
+                self.title_bar,
+                image=self.close_icon,
+                text="",
+                width=30,
+                height=30,
+                command=self.clean_and_close,
+                fg_color="transparent",
+                hover_color="#3A3A3A"
+            )
+        else:
+            self.close_button = ctk.CTkButton(
+                self.title_bar,
+                text="X",
+                width=30,
+                height=30,
+                command=self.clean_and_close,
+                fg_color="transparent",
+                hover_color="#3A3A3A"
+            )
+        self.close_button.pack(side=tk.RIGHT, padx=(0, 5), pady=5)
+
+        # Allow dragging the window
+        self.title_bar.bind("<ButtonPress-1>", self.start_move)
+        self.title_bar.bind("<B1-Motion>", self.do_move)
+        self.title_label.bind("<ButtonPress-1>", self.start_move)
+        self.title_label.bind("<B1-Motion>", self.do_move)
+        self.icon_label.bind("<ButtonPress-1>", self.start_move)
+        self.icon_label.bind("<B1-Motion>", self.do_move)
+
+    def start_move(self, event):
+        self.x = event.x
+        self.y = event.y
+
+    def do_move(self, event):
+        deltax = event.x - self.x
+        deltay = event.y - self.y
+        x = self.dialog_window.winfo_x() + deltax
+        y = self.dialog_window.winfo_y() + deltay
+        self.dialog_window.geometry(f"+{x}+{y}")
+
     def create_main_frame(self):
         # Main frame
         self.main_frame = ctk.CTkFrame(self.dialog_window)
@@ -58,6 +157,64 @@ class AskDialog:
 
         # Input area
         self.create_input_area()
+
+        # Enable window resizing
+        self.enable_resizing()
+
+    def enable_resizing(self):
+        # Bind events for resizing
+        self.dialog_window.bind("<Enter>", self.track_mouse_position)
+        self.dialog_window.bind("<Motion>", self.change_cursor)
+        self.dialog_window.bind("<ButtonPress-1>", self.start_resize)
+        self.dialog_window.bind("<B1-Motion>", self.do_resize)
+        self.dialog_window.bind("<ButtonRelease-1>", self.stop_resize)
+        self.resizing = False
+        self.resizable = False
+
+    def track_mouse_position(self, event):
+        self.mouse_x = event.x
+        self.mouse_y = event.y
+
+    def change_cursor(self, event):
+        # Determine if the cursor is near the bottom-right corner
+        border_width = 10
+        x = event.x
+        y = event.y
+        width = self.dialog_window.winfo_width()
+        height = self.dialog_window.winfo_height()
+
+        if width - border_width <= x <= width and height - border_width <= y <= height:
+            self.dialog_window.config(cursor="size_nw_se")
+            self.resizable = True
+        else:
+            self.dialog_window.config(cursor="")
+            self.resizable = False
+
+    def start_resize(self, event):
+        if self.resizable:
+            self.resizing = True
+            self.start_x = event.x
+            self.start_y = event.y
+            self.start_width = self.dialog_window.winfo_width()
+            self.start_height = self.dialog_window.winfo_height()
+        else:
+            self.start_move(event)
+
+    def do_resize(self, event):
+        if self.resizing:
+            dx = event.x - self.start_x
+            dy = event.y - self.start_y
+            new_width = self.start_width + dx
+            new_height = self.start_height + dy
+            if new_width >= self.dialog_window.minsize()[0] and new_height >= self.dialog_window.minsize()[1]:
+                self.dialog_window.geometry(f"{int(new_width)}x{int(new_height)}")
+                self.main_frame.update_idletasks()
+        else:
+            self.do_move(event)
+
+    def stop_resize(self, event):
+        self.resizing = False
+        self.dialog_window.config(cursor="")
 
     def create_conversation_display(self):
         # Scrollable frame for conversation
@@ -145,6 +302,7 @@ class AskDialog:
             icon = icon.resize(size, Image.LANCZOS)
             return ImageTk.PhotoImage(icon)
         else:
+            print(f"Icon file not found: {icon_path}")
             return None
 
     def on_window_close(self):
@@ -283,14 +441,36 @@ class AskDialog:
         if self.dialog_icon:
             self.dialog_icon.destroy()
 
-        self.dialog_icon = ctk.CTkLabel(self.image_window.img_window, text="💬", cursor="hand2")
-        self.dialog_icon.place(relx=1.0, rely=0.0, anchor='ne', x=-10, y=10)
+        # Load the icon image
+        icon_image = self.load_icon("title_icon.png", size=(30, 30))
+
+        if icon_image:
+            self.dialog_icon = ctk.CTkLabel(
+                self.image_window.img_window,
+                image=icon_image,
+                text="",
+                cursor="hand2"
+            )
+            # Keep a reference to prevent garbage collection
+            self.dialog_icon.image = icon_image
+        else:
+            # If icon not found, use text
+            self.dialog_icon = ctk.CTkLabel(
+                self.image_window.img_window,
+                text="💬",
+                cursor="hand2",
+                font=("Arial", 24),
+                fg_color="transparent",
+                text_color="white"
+            )
+
+        self.dialog_icon.place(relx=1.0, rely=0.0, anchor='ne', x=-20, y=20)
         self.dialog_icon.bind("<Button-1>", self.maximize_dialog)
 
     def update_dialog_icon_position(self):
-        # Update the position of the dialog icon when the image window is moved
+        # Update the position of the dialog icon when the image window moves
         if self.dialog_icon:
-            self.dialog_icon.place(relx=1.0, rely=0.0, anchor='ne', x=-10, y=10)
+            self.dialog_icon.place(relx=1.0, rely=0.0, anchor='ne', x=-20, y=20)
 
     def clean_and_close(self):
         # Reset messages
