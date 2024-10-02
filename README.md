@@ -66,9 +66,9 @@ fastshot
 
 ### OpenAI Standard:
 ```bash
-setx OPENAI_TOKEN "sk-kKC42vieYCFsy7Et037c2c02A9F74b649541E94fDbA978D5"
-setx OPENAI_MM_URL "https://api.adamchatbot.chat/v1/chat/completions"
-setx OPENAI_CHATGPT_URL "https://api.adamchatbot.chat/v1/chat/completions"
+setx OPENAI_TOKEN "sk-kK"
+setx OPENAI_MM_URL "https://xxx"
+setx OPENAI_CHATGPT_URL "https://xxx"
 setx HEAD_TOKEN_KEY "Authorization"
 ```
 ### Standalone Token Exchange:
@@ -78,8 +78,8 @@ setx OPENAI_USER_NAME ""
 setx OPENAI_PASSWORD ""
 setx OPENAI_APPLICATION_ID ""
 setx OPENAI_APPLICATION_NAME ""
-setx OPENAI_MM_URL "https://api.adamchatbot.chat/v1/chat/completions"
-setx OPENAI_CHATGPT_URL "https://api.adamchatbot.chat/v1/chat/completions"
+setx OPENAI_MM_URL "https://xxx"
+setx OPENAI_CHATGPT_URL "https://xxx"
 setx HEAD_TOKEN_KEY "Authorization"
 
 setx OPENAI_HEALTH_URL ""
