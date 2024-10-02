@@ -9,6 +9,7 @@ import base64
 import json
 import io
 import customtkinter as ctk  # Import customtkinter
+from fastshot.gpt4o import ask
 
 class AskDialog:
     def __init__(self, image_window):
@@ -385,14 +386,10 @@ class AskDialog:
         self.conversation_frame._parent_canvas.yview_moveto(1.0)
 
     def ask_dummy(self):
-        # Simulate sending messages to OpenAI GPT-4V model
-        self.dialog_window.after(0, self.show_messages_json)
-
-        # Simulate processing delay
-        time.sleep(2)
-
-        # Simulate AI response
-        answer_text = "This is a simulated response from GPT-4V."
+        # token = get_token() 
+        # resp = ask_with_msgs(token, self.messages)
+        # self.dialog_window.after(0, self.show_messages_json)
+        answer_text = ask(self.messages) #"This is a simulated response from GPT-4."
 
         # Add AI's response to messages list
         self.messages.append({

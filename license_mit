@@ -1217,6 +1217,112 @@ self.close_button = ctk.CTkButton(self.title_bar, text="X", width=30, command=se
 ===========================================================================================
 ===========================================================================================
 
+以下是我总结的这个fastshot的功能的一些文档。来介绍这个工具的功能， 特点， 使用方法，等等。
+
+ 
+ ------- 主要功能 ---------
+
+1. 截图
+pin on top， 随意缩放， annotation， OCR 
+Always on Top: Screenshots stay on top, allowing easy comparison.
+Smooth Zoom and Drag: Effortlessly zoom and drag screenshots.
+Annotation Tools: Hand-drawing and text mode for annotations.
+Clipboard Export: Easily export screenshots to the clipboard.
+OCR Integration: Extract text from images using the built-in OCR plugin powered by PaddleOCR.
+Ask AI Assistant: Ask questions about the screenshot using the integrated GenAI assistant.
+    - 右键菜单 -
+    ❌ Close: Close the current window.
+    💾 Save As...: Save the current screenshot.
+    🖌️ Paint: Activate paint mode.
+    ↩️ Undo: Undo the last action.
+    🚪 Exit Edit: Exit paint or text mode.
+    📋 Copy: Copy the current screenshot to the clipboard.
+    🔤 Text: Activate text mode.
+    🔍 OCR: Perform OCR on the current screenshot and copy the result to the clipboard.
+
+2。 系统任意窗口控制
+📌Always on Top: Toggle the window's always-on-top state.
+🔍 窗口透明度调节： 可以通过快捷键调节所有系统窗口透明度， 方便透视以及Always on Top的透视以及多任务的同步处理， 以及。。。。（各种好处）
+
+3. 随意标注（系统级别， 秩序一个快捷键实现在任意屏幕， application上快速标注）
+🖊️ Screen Pen: Activate the screen pen.
+
+4. GenAI 助手
+基于多模态的GenAI 助手， 与系统无缝集成， 可以结合fastshot截屏工具， 读取屏幕上任意内容，随意提问。 
+
+
+ ------- 特点 ---------
+Plugin机制， 支持功能扩展
+桌面application， 更易于实用， 数据集成更方便。
+支持快捷键自定义， 大部分操作只需一个快捷键而无需频繁琐碎的touch point
+基于最新多模态的GenAI助手，无缝交互， 聪明准确的回答。
+Training free, taging free。
+非侵入式工作流交互与效率提升， 无需更改现有工作流程， 无需更改现有系统， 无需更改现有数据结构。
+《其他待你补充， 需要真的非常insightful的特点...》
+
+---------Installation---------
+You can install Fastshot from PyPI:
+
+pip install fastshot
+---------Usage---------
+Once installed, you can start Fastshot from the command line:
+
+fastshot
+
+--------- Plugin机制 ---------
+《待补充》
+
+
+------- Shortcuts ---------
+[Shortcuts]
+hotkey_snip = <shift>+a+s
+hotkey_paint = <ctrl>+p
+hotkey_text = <ctrl>+t
+
+
+hotkey_screenpen_toggle = <ctrl>+<cmd>+<alt>
+hotkey_undo = <ctrl>+z
+hotkey_redo = <ctrl>+y
+hotkey_screenpen_exit = <esc>
+hotkey_screenpen_clear_hide = <ctrl>+<esc>
+
+hotkey_topmost_on = <esc>+`
+; optional as hotkey_topmost_on is switching between on and off
+hotkey_topmost_off = <cmd>+<shift>+\
+
+hotkey_opacity_down = <left>+<right>+<down>
+hotkey_opacity_up = <left>+<right>+<up>
+
+[ScreenPen]
+enable_screenpen = True
+pen_color = red
+pen_width = 3
+
+
+===========================================================================================
+
+
+现在需要你帮我分析这个工具在银行operation部门的潜在应用以及价值。 并提供一个详细的分析报告
+
+以下是一些观察：
+ -------Bank operator behavior pattern---------
+1. 大量的数据处理， 需要截图，标注， 
+2. 需要在各个系统Cross check。
+3. 需要对比 ，分析， validate， 以及quality ensurance。  
+4. 需要大量手动输入（Summarization， conclusion 等等）
+5. others...
+
+ -------Bank operator 痛点--------- 
+1. 大量的数据处理， 需要截图，标注， 
+2. 多系统窗口频繁切换（core-banking, browser, pdf, 图像。。。）
+3. 手动输入各种发现， 线索， conclusion， 总结等等。
+4. 文档类型free-format， 难以快速定位关键要素并做出快速准确的decision
+5. 部分文档资料以local language整理而成， 存在语言gap
+5. others...
+
+
+
+
 
 
 

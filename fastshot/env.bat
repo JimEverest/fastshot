@@ -1,0 +1,11 @@
+@echo off
+setx OPENAI_TOKEN ""
+setx OPENAI_TOKEN_URL ""
+setx OPENAI_HEALTH_URL ""
+setx OPENAI_MM_URL ""
+setx OPENAI_CHATGPT_URL ""
+setx OPENAI_USER_NAME ""
+setx OPENAI_PASSWORD ""
+setx OPENAI_APPLICATION_ID ""
+setx OPENAI_APPLICATION_NAME ""
+setx HEAD_TOKEN_KEY "Authorization"
