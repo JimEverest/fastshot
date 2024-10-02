@@ -31,7 +31,7 @@ def ask(msgs):
         _token = "Bearer " + OPENAI_TOKEN
     else:
         # 如果没有找到环境变量中的token，尝试通过get_token获取
-        _token = "Bearer " + get_token()
+        _token = get_token()
     resp = ask_with_msgs(_token, msgs)
     return resp
         

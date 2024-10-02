@@ -5,3 +5,4 @@ include fastshot/resources/ai_icon.png
 include fastshot/resources/close_icon.png
 include fastshot/resources/minimize_icon.png
 include fastshot/resources/title_icon.png
+include fastshot/env.bat
