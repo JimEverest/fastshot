@@ -1,6 +1,12 @@
 # Fastshot
-Fastshot is a versatile screenshot and annotation tool designed to streamline your workflow. Whether you're a student, developer, researcher, or working in operations, Fastshot enhances multitasking capabilities by providing quick and efficient ways to capture, pin, annotate, and analyze your screen content.
 
+Fastshot is a GenAI powered screenshot and annotation tool designed to optimize your workflow. Ideal for students, developers, researchers, and operations professionals, Fastshot enhances multitasking by providing seamless, efficient tools to capture, pin, annotate, and analyze screen content.
+
+With its "pin on top" feature, Fastshot allows users to keep screenshots easily accessible while enabling smooth zooming, moving, annotation, and copying for multi-system comparisons. The built-in OCR tool enables quick extraction of text from any part of the screen, further streamlining your workflow.
+
+Additionally, Fastshot’s GenAI-powered assistant offers advanced analysis and summarization of screen content, allowing users to extract information and ask questions with ease, significantly boosting productivity.
+
+The tool also includes a Screen Pen feature, window pinning capabilities, and customizable window opacity adjustments—perfect for managing complex workflows across multiple windows and tasks.
 
 ## Table of Contents
 - [Features](#features)
@@ -87,6 +93,8 @@ setx OPENAI_HEALTH_URL ""
 
 ## Shortcuts
 Customize your experience with configurable shortcuts. Most operations require only a single hotkey, minimizing the need for repetitive touch points.
+
+![Shortcuts](./shortcuts.png)
 
 ```ini
 [Shortcuts]
