@@ -1,165 +1,204 @@
+# window_control.py
+
 import ctypes
 from ctypes import wintypes
 from pynput import keyboard
 import win32gui
 import win32con
 import win32process
-import logging
+import time
 
-# 定义 Windows API 函数
 user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32  # 定义 kernel32
+kernel32 = ctypes.windll.kernel32
 
-# 设置日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-    # handlers=[
-    #     logging.FileHandler("hotkeys_pynput.log"),
-    #     logging.StreamHandler()
-    # ]
-)
-
-# 常量
-GWL_EXSTYLE = -20  # 用于获取扩展窗口样式的常量
+# Constants
+GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x80000
 LWA_ALPHA = 0x2
 
-# 定义一个全局变量来存储透明度
-current_window_opacity = 1.0  # 默认不透明
+# Global variable for window opacity
+current_window_opacity = 1.0  # Default opacity
 
-# 获取前台窗口
 def get_foreground_window():
     hwnd = user32.GetForegroundWindow()
     if hwnd and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
-        # 获取窗口的进程ID和程序名
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
         process_handle = open_process(pid)
         if process_handle:
             executable = win32process.GetModuleFileNameEx(process_handle, None)
             window_title = win32gui.GetWindowText(hwnd)
             window_class = win32gui.GetClassName(hwnd)
-            print(f"当前激活窗口句柄: {hwnd}, 标题: {window_title}, 程序: {executable}, 窗口类: {window_class}")
+            print(f"Current active window handle: {hwnd}, Title: {window_title}, Executable: {executable}, Class: {window_class}")
             return hwnd
         else:
-            print(f"无法打开进程，PID: {pid}")
+            print(f"Cannot open process, PID: {pid}")
             return None
     else:
-        print("无法获取有效的前台窗口句柄或窗口不可见")
+        print("Cannot get valid foreground window handle or window is not visible")
         return None
 
 def open_process(pid):
-    """通过 PID 打开进程句柄，返回进程句柄"""
     PROCESS_ALL_ACCESS = (0x000F0000 | 0x00100000 | 0xFFF)
     return kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
 
-# 设置窗口透明度
 def set_window_opacity(hwnd, opacity):
-    """设置窗口透明度，确保在 10% 到 100% 之间"""
     global current_window_opacity
     if hwnd:
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)  # 使用 GWL_EXSTYLE
+        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
-        
-        # 确保透明度在 10% 到 100% 之间
-        opacity = max(0.1, min(opacity, 1.0))  # 限制透明度在 [0.1, 1.0]
-        current_window_opacity = opacity  # 保存当前透明度值
-        print(f"设置透明度：{opacity * 100}%")
+        # Ensure opacity is between 10% and 100%
+        opacity = max(0.1, min(opacity, 1.0))
+        current_window_opacity = opacity
+        print(f"Setting opacity: {opacity * 100}%")
         user32.SetLayeredWindowAttributes(hwnd, 0, int(255 * opacity), LWA_ALPHA)
 
 def get_window_opacity(hwnd):
-    """获取窗口当前透明度，返回全局存储的透明度值"""
     global current_window_opacity
-    return current_window_opacity  # 直接返回存储的透明度值
+    return current_window_opacity
 
-# 切换总在最前状态
 def toggle_always_on_top():
     hwnd = get_foreground_window()
     if hwnd == 0:
-        logging.warning("未能获取当前活动窗口句柄")
         return
     window_title = win32gui.GetWindowText(hwnd)
-    logging.info(f"当前活动窗口句柄: {hwnd}, 标题: {window_title}")
 
     try:
-        # 检查当前窗口是否为总在最前
         ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
         is_topmost = bool(ex_style & win32con.WS_EX_TOPMOST)
 
         if is_topmost:
-            # 取消总在最前
-            result = win32gui.SetWindowPos(
+            # Remove always-on-top
+            win32gui.SetWindowPos(
                 hwnd,
                 win32con.HWND_NOTOPMOST,
                 0, 0, 0, 0,
                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
             )
-            # if result:
-            #     logging.info(f"窗口 '{window_title}' 已取消总在最前")
-            # else:
-            #     logging.error(f"无法取消窗口 '{window_title}' 的总在最前属性")
+            print(f"Window '{window_title}' is no longer always on top.")
         else:
-            # 设置为总在最前
-            result = win32gui.SetWindowPos(
+            # Set always-on-top
+            win32gui.SetWindowPos(
                 hwnd,
                 win32con.HWND_TOPMOST,
                 0, 0, 0, 0,
                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
             )
-            # if result:
-            #     logging.info(f"窗口 '{window_title}' 已设置为总在最前")
-            # else:
-            #     logging.error(f"无法设置窗口 '{window_title}' 为总在最前")
+            print(f"Window '{window_title}' is now always on top.")
     except Exception as e:
-        logging.exception(f"切换窗口总在最前属性时发生异常: {e}")
+        print(f"Exception while toggling always-on-top: {e}")
 
-# 热键处理器
 class HotkeyListener:
-    def __init__(self, config):
-        self.listener = keyboard.GlobalHotKeys({
-            config['Shortcuts'].get('hotkey_topmost_on'): self.toggle_topmost_on,
-            config['Shortcuts'].get('hotkey_topmost_off'): self.toggle_topmost_off,
-            config['Shortcuts'].get('hotkey_opacity_down'): self.decrease_opacity,
-            config['Shortcuts'].get('hotkey_opacity_up'): self.increase_opacity
-        })
+    def __init__(self, config, root, app):
+        self.config = config
+        self.root = root  # Tkinter root window
+        self.app = app  # Reference to main application
+        self.load_hotkeys()
+        self.listener = None
+        self.ctrl_press_count = 0
+        self.ctrl_last_release_time = 0.0
+
+    def load_hotkeys(self):
+        shortcuts = self.config['Shortcuts']
+
+        # Load standard hotkeys
+        self.hotkey_topmost_on = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_topmost_on', '<ctrl>+<shift>+t')),
+            self.toggle_topmost_on
+        )
+        self.hotkey_topmost_off = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_topmost_off', '<ctrl>+<shift>+r')),
+            self.toggle_topmost_off
+        )
+        self.hotkey_opacity_down = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_opacity_down', '<ctrl>+<shift>+[')),
+            self.decrease_opacity
+        )
+        self.hotkey_opacity_up = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_opacity_up', '<ctrl>+<shift>+]')),
+            self.increase_opacity
+        )
+        self.hotkey_snip = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_snip', '<shift>+a+s')),
+            self.on_activate_snip
+        )
+
+        # Load the 4-times Ctrl hotkey settings
+        self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
+        self.ask_dialog_press_count = int(shortcuts.get('hotkey_ask_dialog_count', '4'))
+        self.ask_dialog_time_window = float(shortcuts.get('hotkey_ask_dialog_time_window', '1.0'))
+
+    def start(self):
+        self.listener = keyboard.Listener(
+            on_press=self.on_press,
+            on_release=self.on_release)
+        self.listener.start()
+
+    def on_press(self, key):
+        self.hotkey_topmost_on.press(self.listener.canonical(key))
+        self.hotkey_topmost_off.press(self.listener.canonical(key))
+        self.hotkey_opacity_down.press(self.listener.canonical(key))
+        self.hotkey_opacity_up.press(self.listener.canonical(key))
+        self.hotkey_snip.press(self.listener.canonical(key))
+
+        # Handle Ctrl key presses
+        if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+            pass  # Do nothing on press
+        else:
+            # Any other key resets the count
+            self.ctrl_press_count = 0
+
+    def on_release(self, key):
+        self.hotkey_topmost_on.release(self.listener.canonical(key))
+        self.hotkey_topmost_off.release(self.listener.canonical(key))
+        self.hotkey_opacity_down.release(self.listener.canonical(key))
+        self.hotkey_opacity_up.release(self.listener.canonical(key))
+        self.hotkey_snip.release(self.listener.canonical(key))
+
+        # Handle Ctrl key releases
+        if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+            current_time = time.time()
+            if current_time - self.ctrl_last_release_time > self.ask_dialog_time_window:
+                # Too much time has passed; reset counter
+                self.ctrl_press_count = 0
+            self.ctrl_press_count += 1
+            self.ctrl_last_release_time = current_time
+
+            if self.ctrl_press_count >= self.ask_dialog_press_count:
+                # Check if all releases are within the time window
+                if current_time - (self.ctrl_last_release_time - self.ask_dialog_time_window) <= self.ask_dialog_time_window:
+                    # Reset counter
+                    self.ctrl_press_count = 0
+                    # Open AskDialog
+                    self.root.after(0, self.app.open_global_ask_dialog)
+        else:
+            # Any other key resets the count
+            self.ctrl_press_count = 0
 
     def toggle_topmost_on(self):
-        logging.info("检测到热键: 总在最前")
         toggle_always_on_top()
 
     def toggle_topmost_off(self):
-        logging.info("检测到热键: 取消总在最前")
         toggle_always_on_top()
 
     def decrease_opacity(self):
-        """减少窗口透明度，每次减少 10%，最低到 10%"""
         hwnd = get_foreground_window()
         if hwnd:
             current_opacity = get_window_opacity(hwnd)
-            print(f"当前透明度：{current_opacity * 100}%")
-            
-            # 每次减少 10%
             new_opacity = max(0.1, current_opacity - 0.1)
             set_window_opacity(hwnd, new_opacity)
-            print(f"窗口透明度已减少至 {new_opacity * 100:.0f}%")
+            print(f"Window opacity decreased to {new_opacity * 100:.0f}%")
 
     def increase_opacity(self):
-        """增加窗口透明度，每次增加 10%，最高到 100%"""
         hwnd = get_foreground_window()
         if hwnd:
             current_opacity = get_window_opacity(hwnd)
-            print(f"当前透明度：{current_opacity * 100}%")
-            
-            # 每次增加 10%
             new_opacity = min(1.0, current_opacity + 0.1)
             set_window_opacity(hwnd, new_opacity)
-            print(f"窗口透明度已增加至 {new_opacity * 100:.0f}%")
+            print(f"Window opacity increased to {new_opacity * 100:.0f}%")
 
-    def start(self):
-        self.listener.start()
-
-    def stop(self):
-        self.listener.stop()
+    def on_activate_snip(self):
+        print("Snipping hotkey activated")
+        self.root.after(0, lambda: self.root.snipping_tool.start_snipping())
 
 # 从配置文件加载热键
 def load_config():
@@ -170,12 +209,3 @@ def load_config():
         'hotkey_opacity_up': '<cmd>+<shift>+]'
     }
     return config
-
-# 主程序入口
-if __name__ == '__main__':
-    config = load_config()  # 加载配置
-    listener = HotkeyListener(config)
-    logging.info("正在监听热键...")
-    listener.start()
-    input("按 Enter 停止程序...")
-    listener.stop()

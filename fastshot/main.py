@@ -24,17 +24,13 @@ from fastshot.snipping_tool import SnippingTool
 from fastshot.image_window import ImageWindow
 from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
-
-
-
-
-
-
+from fastshot.ask_dialog import AskDialog
 
 class SnipasteApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()
+        self.root.app = self  # Set reference to self in root
         self.monitors = get_monitors()
         self.snipping_tool = SnippingTool(self.root, self.monitors, self.on_screenshot)
         self.windows = []
@@ -43,12 +39,13 @@ class SnipasteApp:
         self.print_config_info()
         self.check_and_download_models()
         self.load_plugins()
-        self.setup_hotkey_listener()
-        listener = HotkeyListener(self.config)
-        listener.start()
 
+        # Initialize the hotkey listener
+        self.ask_dialog = None  # Reference to AskDialog instance
+        self.listener = HotkeyListener(self.config, self.root, self)
+        self.listener.start()
 
-        # 初始化 ScreenPen
+        # Initialize ScreenPen
         enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)
         if enable_screenpen:
             self.screen_pen = ScreenPen(self.root, self.config)
@@ -56,11 +53,25 @@ class SnipasteApp:
         else:
             self.screen_pen = None
 
+    def open_global_ask_dialog(self):
+        if self.ask_dialog:
+            if self.ask_dialog.is_minimized:
+                # Restore minimized dialog
+                self.ask_dialog.dialog_window.deiconify()
+                self.ask_dialog.is_minimized = False
+            else:
+                # Bring existing dialog to front
+                self.ask_dialog.dialog_window.lift()
+        else:
+            # Create new dialog
+            self.ask_dialog = AskDialog()
+
+        
     def load_config(self):
         config = configparser.ConfigParser()
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
         if not os.path.exists(config_path):
-            # 创建默认的配置文件
+            # Create default config file
             config['Paths'] = {
                 'download_url': 'https://raw.githubusercontent.com/JimEverest/ppocr_v4_models/main/.paddleocr.zip'
             }
@@ -72,7 +83,10 @@ class SnipasteApp:
                 'hotkey_undo': '<ctrl>+z',
                 'hotkey_redo': '<ctrl>+y',
                 'hotkey_screenpen_exit': '<esc>',
-                'hotkey_screenpen_clear_hide': '<ctrl>+<esc>'
+                'hotkey_screenpen_clear_hide': '<ctrl>+<esc>',
+                'hotkey_ask_dialog_key': 'ctrl',
+                'hotkey_ask_dialog_count': '4',
+                'hotkey_ask_dialog_time_window': '1.0'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -88,17 +102,20 @@ class SnipasteApp:
         return config
 
     def print_config_info(self):
-        print(f"配置文件路径: {self.config_path}")
-        print("快捷键设置:")
+        print(f"Config file path: {self.config_path}")
+        print("Shortcut settings:")
         shortcut_descriptions = {
-            'hotkey_snip': '启动截图',
-            'hotkey_paint': '启用画笔模式',
-            'hotkey_text': '启用文字模式',
-            'hotkey_screenpen_toggle': '切换屏幕画笔模式',
-            'hotkey_undo': '撤销上一步',
-            'hotkey_redo': '重做上一步',
-            'hotkey_screenpen_exit': '退出屏幕画笔模式',
-            'hotkey_screenpen_clear_hide': '清除画笔并隐藏'
+            'hotkey_snip': 'Start snipping',
+            'hotkey_paint': 'Enable paint mode',
+            'hotkey_text': 'Enable text mode',
+            'hotkey_screenpen_toggle': 'Toggle screen pen mode',
+            'hotkey_undo': 'Undo last action',
+            'hotkey_redo': 'Redo last action',
+            'hotkey_screenpen_exit': 'Exit screen pen mode',
+            'hotkey_screenpen_clear_hide': 'Clear pen and hide',
+            'hotkey_ask_dialog_key': 'Ask Dialog key',
+            'hotkey_ask_dialog_count': 'Ask Dialog press count',
+            'hotkey_ask_dialog_time_window': 'Ask Dialog time window'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -218,6 +235,7 @@ class SnipasteApp:
                 window.exit_edit_mode()
 
     def run(self):
+        self.root.snipping_tool = self.snipping_tool
         self.root.mainloop()
 
 def main():
