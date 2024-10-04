@@ -262,7 +262,7 @@ class AskDialog:
 
         # Thumbnail label
         self.thumbnail_label = ctk.CTkLabel(self.input_frame, image=self.thumbnail_photo, text="")
-        self.thumbnail_label.pack(side=tk.LEFT, padx=(0, 5))
+        self.thumbnail_label.pack(side=tk.LEFT, padx=(0, 15))
         self.thumbnail_label.bind("<Enter>", self.show_image_preview)
         self.thumbnail_label.bind("<Leave>", self.hide_image_preview)
 
@@ -313,7 +313,7 @@ class AskDialog:
         user_input = self.user_entry.get("1.0", tk.END).strip()
         if user_input:
             self.user_entry.delete("1.0", tk.END)
-            self.append_message(user_input, sender='user')
+            self.append_message(user_input, sender='user') #-UI Update
 
             # Add user's message to messages list
             if self.is_first_query:
@@ -386,9 +386,6 @@ class AskDialog:
         self.conversation_frame._parent_canvas.yview_moveto(1.0)
 
     def ask_dummy(self):
-        # token = get_token() 
-        # resp = ask_with_msgs(token, self.messages)
-        # self.dialog_window.after(0, self.show_messages_json)
         answer_text = ask(self.messages) #"This is a simulated response from GPT-4."
 
         # Add AI's response to messages list

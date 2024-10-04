@@ -243,16 +243,16 @@ By following these steps, you can create and integrate custom plugins to extend 
 
 
 ## Todo:
-1. ~~tk window force trigger ~~
+1. ~~tk window force trigger~~
 2. ~~ppocr[Default]~~
 3. ~~screenpen integration~~
 4. hyder
 5. ~~transprent window~~
 6. ~~fixed on top~~
-7. pyinstaller.
+7. pyinstaller
 8. ~~gdt-4o multimodal task(OCR/QA)~~
 9. UI(PySimpleGUI/WebPortal)
 10. TTS/STT
 11. ~~openai-llm-adoption~~
 12. ~~Documents~~
-13. ~~config-env ~~
+13. ~~config-env~~
