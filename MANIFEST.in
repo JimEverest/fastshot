@@ -7,8 +7,4 @@ include fastshot/resources/close_icon.png
 include fastshot/resources/minimize_icon.png
 include fastshot/resources/title_icon.png
 include fastshot/env.bat
-
-recursive-include web/templates *.html
-recursive-include web/static/css *.css
-recursive-include web/static/js *.js
-recursive-include web/static/images *.png *.jpg *.jpeg *.gif
+recursive-include fastshot/web * 

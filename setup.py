@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='1.1.2',
+    version='1.1.3',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -21,12 +21,13 @@ setup(
         "configparser"
     ],
     package_data={
-        'fastshot': ['config.ini', '_config_reset.ini'],
-        'web': [
-            'templates/*.html',
-            'static/css/*.css',
-            'static/js/*.js',
-            'static/images/*.png',
+        'fastshot': [
+            'config.ini', 
+            '_config_reset.ini',
+            'web/templates/*.html',
+            'web/static/css/*.css',
+            'web/static/js/*.js',
+            'web/static/images/*.png',
         ],
     },
     entry_points={
