@@ -1,0 +1,9 @@
+<!-- templates/keyboard.html -->
+{% extends 'layout.html' %}
+
+{% block content %}
+<h1 class="mb-4">Keyboard 快捷键说明</h1>
+<div class="text-center">
+    <img src="{{ url_for('static', filename='images/shortcuts.png') }}" alt="Keyboard Shortcuts" class="img-fluid">
+</div>
+{% endblock %}

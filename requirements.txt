@@ -1,12 +1,13 @@
 pyautogui,
 pynput,
-pillow,
 screeninfo,
 mss,
 Pillow,
 pyperclip,
 pywin32,
-paddleocr,
 paddlepaddle,
+paddleocr,
 pywin32,
-customtkinter
+customtkinter,
+flask,
+configparser

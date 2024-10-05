@@ -1,0 +1,125 @@
+<!-- templates/config.html -->
+{% extends 'layout.html' %}
+
+{% block content %}
+<h1 class="mb-4">配置设置</h1>
+
+<form method="post" id="configForm">
+    <!-- 保存和重置按钮放在表单顶部 -->
+    <div class="d-flex justify-content-end mb-4">
+        <button type="submit" form="configForm" class="btn btn-primary me-2">保存</button>
+        <button type="button" class="btn btn-secondary" onclick="resetConfig()">重置</button>
+    </div>
+
+    <!-- Shortcuts 配置 -->
+    <div class="mb-4">
+        <h2 class="mb-3">
+            <button class="btn btn-link text-decoration-none w-100 text-start d-flex justify-content-between align-items-center section-header" type="button" data-bs-toggle="collapse" data-bs-target="#shortcutsSection" aria-expanded="true" aria-controls="shortcutsSection">
+                快捷键设置
+                <i class="bi bi-chevron-down"></i>
+            </button>
+        </h2>
+        <div class="collapse show" id="shortcutsSection">
+            {% for key, value in config_data['Shortcuts'].items() %}
+            <div class="mb-3">
+                <label for="{{ key }}" class="form-label">{{ key.replace('_', ' ').title() }}</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="{{ key }}" name="Shortcuts.{{ key }}" value="{{ value }}">
+                    <button class="btn btn-outline-secondary" type="button" onclick="captureHotkey('{{ key }}')">捕获</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- ScreenPen 配置 -->
+    <div class="mb-4">
+        <h2 class="mb-3">
+            <button class="btn btn-link text-decoration-none w-100 text-start d-flex justify-content-between align-items-center section-header" type="button" data-bs-toggle="collapse" data-bs-target="#screenPenSection" aria-expanded="true" aria-controls="screenPenSection">
+                屏幕画笔设置
+                <i class="bi bi-chevron-down"></i>
+            </button>
+        </h2>
+        <div class="collapse show" id="screenPenSection">
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="enable_screenpen" name="ScreenPen.enable_screenpen" value="True" {% if config_data['ScreenPen']['enable_screenpen'] == 'True' %}checked{% endif %}>
+                <label class="form-check-label" for="enable_screenpen">启用屏幕画笔</label>
+            </div>
+            <div class="mb-3">
+                <label for="pen_color" class="form-label">画笔颜色</label>
+                <input type="color" class="form-control form-control-color" id="pen_color" name="ScreenPen.pen_color" value="{{ config_data['ScreenPen']['pen_color'] }}">
+            </div>
+            <div class="mb-3">
+                <label for="pen_width" class="form-label">画笔宽度</label>
+                <input type="number" class="form-control" id="pen_width" name="ScreenPen.pen_width" value="{{ config_data['ScreenPen']['pen_width'] }}">
+            </div>
+        </div>
+    </div>
+
+    <!-- GenAI 配置 -->
+    <div class="mb-4">
+        <h2 class="mb-3">
+            <button class="btn btn-link text-decoration-none w-100 text-start d-flex justify-content-between align-items-center section-header" type="button" data-bs-toggle="collapse" data-bs-target="#genAISection" aria-expanded="true" aria-controls="genAISection">
+                GenAI 配置
+                <i class="bi bi-chevron-down"></i>
+            </button>
+        </h2>
+        <div class="collapse show" id="genAISection">
+            {% for key, value in config_data['GenAI'].items() %}
+            <div class="mb-3">
+                {% set label_class = 'form-label' %}
+                {% if key in ['openai_token_url', 'openai_mm_url', 'openai_chat_url', 'openai_user_name', 'openai_password', 'openai_application_id', 'openai_application_name', 'head_token_key'] %}
+                    {% set label_class = label_class + ' label-dark-blue' %}
+                {% endif %}
+                <label for="{{ key }}" class="{{ label_class }}">{{ key.replace('_', ' ').title() }}</label>
+                <input type="text" class="form-control" id="{{ key }}" name="GenAI.{{ key }}" value="{{ value }}">
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Paths 配置 -->
+    <div class="mb-4">
+        <h2 class="mb-3">
+            <button class="btn btn-link text-decoration-none w-100 text-start d-flex justify-content-between align-items-center section-header" type="button" data-bs-toggle="collapse" data-bs-target="#pathsSection" aria-expanded="true" aria-controls="pathsSection">
+                Paths 配置
+                <i class="bi bi-chevron-down"></i>
+            </button>
+        </h2>
+        <div class="collapse show" id="pathsSection">
+            <div class="mb-3">
+                <label for="download_url" class="form-label">下载 URL</label>
+                <input type="text" class="form-control" id="download_url" name="Paths.download_url" value="{{ config_data['Paths']['download_url'] }}">
+            </div>
+        </div>
+    </div>
+
+    <!-- 保存和重置按钮也可以放在表单底部 -->
+    <div class="d-flex justify-content-end mt-4">
+        <button type="submit" form="configForm" class="btn btn-primary me-2">保存</button>
+        <button type="button" class="btn btn-secondary" onclick="resetConfig()">重置</button>
+    </div>
+</form>
+
+<!-- 动态键盘展示区域 -->
+<h3 class="mt-5 mb-3">快捷键可视化(Todo)</h3>
+<canvas id="keyboardCanvas" width="800" height="300"></canvas>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/hotkey_capture.js') }}"></script>
+<script src="{{ url_for('static', filename='js/keyboard_visualization.js') }}"></script>
+<script src="{{ url_for('static', filename='js/color_conversion.js') }}"></script>
+<script>
+    // 初始化键盘可视化
+    const hotkeys = {{ config_data['Shortcuts']|tojson }};
+    visualizeKeyboard(hotkeys);
+
+    // 重置配置的函数
+    function resetConfig() {
+        if (confirm('确定要重置配置吗？')) {
+            window.location.href = '{{ url_for("reset_config") }}';
+        }
+    }
+</script>
+{% endblock %}

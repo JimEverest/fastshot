@@ -19,6 +19,14 @@ import configparser
 import urllib.request
 import zipfile
 import shutil
+import threading
+# Import your Flask app
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), 'web'))
+from fastshot.web.web_app import app as flask_app 
+
+print(f"flask_app: {flask_app}")
+print(f"flask_app type: {type(flask_app)}")
 
 from fastshot.snipping_tool import SnippingTool
 from fastshot.image_window import ImageWindow
@@ -52,6 +60,19 @@ class SnipasteApp:
             self.screen_pen.start_keyboard_listener()
         else:
             self.screen_pen = None
+
+        # Start the Flask web app
+        self.start_flask_app()
+
+    def start_flask_app(self):
+        def run_flask():
+            try:
+                flask_app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+            except Exception as e:
+                print(f"Failed to start Flask app: {e}")
+
+        threading.Thread(target=run_flask, daemon=True).start()
+        print("Flask web app started on http://127.0.0.1:5000")
 
     def open_global_ask_dialog(self):
         if self.ask_dialog:

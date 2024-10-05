@@ -251,8 +251,10 @@ By following these steps, you can create and integrate custom plugins to extend 
 6. ~~fixed on top~~
 7. pyinstaller
 8. ~~gdt-4o multimodal task(OCR/QA)~~
-9. UI(PySimpleGUI/WebPortal)
+9. ~~UI(PySimpleGUI/WebPortal)~~
 10. TTS/STT
 11. ~~openai-llm-adoption~~
 12. ~~Documents~~
 13. ~~config-env~~
+14. copy&paste image into the Ask Dialog
+15. ~~Global Ask Dialog~~

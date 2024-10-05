@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='1.1.1',
+    version='1.1.2',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -16,10 +16,18 @@ setup(
         "pywin32",
         "paddleocr",
         "paddlepaddle",
-        "customtkinter"
+        "customtkinter",
+        "flask",
+        "configparser"
     ],
     package_data={
-        'fastshot': ['config.ini'],  # 明确指示包含 config.ini
+        'fastshot': ['config.ini', '_config_reset.ini'],
+        'web': [
+            'templates/*.html',
+            'static/css/*.css',
+            'static/js/*.js',
+            'static/images/*.png',
+        ],
     },
     entry_points={
         'console_scripts': [

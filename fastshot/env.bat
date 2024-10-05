@@ -1,9 +1,9 @@
 @echo off
-setx OPENAI_TOKEN ""
+setx OPENAI_TOKEN "sk-kKC42vieYCFsy7Et037c2c02A9F74b649541E94fDbA978D5"
 setx OPENAI_TOKEN_URL ""
 setx OPENAI_HEALTH_URL ""
-setx OPENAI_MM_URL ""
-setx OPENAI_CHATGPT_URL ""
+setx OPENAI_MM_URL "https://api.adamchatbot.chat/v1/chat/completions"
+setx OPENAI_CHATGPT_URL "https://api.adamchatbot.chat/v1/chat/completions"
 setx OPENAI_USER_NAME ""
 setx OPENAI_PASSWORD ""
 setx OPENAI_APPLICATION_ID ""

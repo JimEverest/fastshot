@@ -1,0 +1,32 @@
+<!-- templates/layout.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title if title else "Web 应用" }}</title>
+    <!-- 引入Bootstrap CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+    <!-- 引入Bootstrap Icons -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.css') }}">
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <!-- 左侧导航栏 -->
+    <nav class="nav flex-column nav-pills">
+        <a class="nav-link {% if request.endpoint == 'config' %}active{% endif %}" href="{{ url_for('config') }}">配置</a>
+        <a class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">仪表板</a>
+        <a class="nav-link {% if request.endpoint == 'keyboard' %}active{% endif %}" href="{{ url_for('keyboard') }}">Keyboard</a>
+        <!-- 未来可以添加更多链接 -->
+    </nav>
+    <!-- 主内容区域 -->
+    <div class="flex-grow-1">
+        {% block content %}{% endblock %}
+    </div>
+    <!-- 引入必要的JS库 -->
+    <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <!-- 自定义JS -->
+    {% block scripts %}{% endblock %}
+</body>
+</html>

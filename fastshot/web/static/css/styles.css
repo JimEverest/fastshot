@@ -1,0 +1,140 @@
+/* static/css/styles.css */
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f5f5f7;
+    color: #1d1d1f;
+    margin: 0;
+    padding: 0;
+}
+
+.nav {
+    background-color: #ffffff;
+    border-right: 1px solid #d2d2d7;
+    height: 100vh;
+    position: fixed;
+    width: 200px;
+    top: 0;
+    left: 0;
+    padding-top: 20px;
+}
+
+.nav-link {
+    font-size: 1rem;
+    color: #007aff;
+    padding: 15px 20px;
+    margin-bottom: 10px;
+}
+
+.nav-link.active {
+    background-color: #e5e5ea;
+    border-radius: 8px;
+}
+
+.flex-grow-1 {
+    margin-left: 220px;
+    padding: 40px;
+}
+
+h1 {
+    font-weight: 600;
+    font-size: 2rem;
+}
+
+h2 {
+    font-weight: 600;
+    font-size: 1.5rem;
+}
+
+h3 {
+    font-weight: 600;
+    font-size: 1.25rem;
+}
+
+.form-label {
+    font-weight: 500;
+}
+
+.label-dark-blue {
+    color: #003366;
+}
+
+.form-control, .form-control-color {
+    max-width: 500px;
+    border-radius: 8px;
+    border: 1px solid #d2d2d7;
+}
+
+.btn-primary {
+    background-color: #007aff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+}
+
+.btn-primary:hover {
+    background-color: #005bb5;
+}
+
+.btn-secondary {
+    border-radius: 8px;
+    padding: 10px 20px;
+}
+
+.input-group .btn {
+    border-radius: 0 8px 8px 0;
+}
+
+.input-group .form-control {
+    border-radius: 8px 0 0 8px;
+}
+
+.form-check-input:checked {
+    background-color: #007aff;
+    border-color: #007aff;
+}
+
+#keyboardCanvas {
+    border: 1px solid #d2d2d7;
+    border-radius: 8px;
+    margin-top: 20px;
+}
+
+/* 折叠标题样式 */
+.section-header {
+    font-size: 1.5rem;
+    color: #1d1d1f;
+    padding: 10px 0;
+    border-bottom: 1px solid #d2d2d7;
+}
+
+.section-header:hover {
+    text-decoration: none;
+}
+
+.collapse.show .bi-chevron-down {
+    transform: rotate(180deg);
+}
+
+.bi-chevron-down {
+    transition: transform 0.2s;
+    font-size: 1.5rem;
+}
+
+/* 使保存和重置按钮在移动设备上也能很好地显示 */
+@media (max-width: 576px) {
+    .d-flex {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .me-2 {
+        margin-right: 0 !important;
+        margin-bottom: 10px;
+    }
+}
+/* 新增样式 */
+img.img-fluid {
+    max-width: 100%;
+    height: auto;
+}
