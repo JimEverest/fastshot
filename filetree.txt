@@ -1,0 +1,52 @@
+├── fastshot
+│   ├──__init__.py
+│   ├── config.ini
+│   ├── _config_reset.ini
+│   ├── image_window.py
+│   ├── main.py
+│   ├── paint_tool.py
+│   ├── plugin_ocr.py
+│   ├── snipping_tool.py
+│   ├── text_tool.py
+│   ├── window_control.py
+│   ├── web
+│   │   ├── web_app.py
+│   │   ├── config_manager.py
+│   │   ├── templates/
+│   │   │   ├── layout.html
+│   │   │   ├── config.html
+│   │   │   ├── dashboard.html
+│   │   │   └── keyboard.html 
+│   │   └── static
+│   │       ├── css
+│   │       │   ├── bootstrap.min.css
+│   │       │   ├── ...  # 其他样式文件
+│   │       │   └── styles.css
+│   │       ├── js
+│   │       │   ├── jquery.min.js
+│   │       │   ├── bootstrap.bundle.min.js
+│   │       │   ├── hotkey_capture.js
+│   │       │   ├── keyboard_visualization.js
+│   │       │   ├── ...  # 其他脚本文件
+│   │       │   └── color_conversion.js
+│   │       └── images
+│   │           └── shortcuts.png  
+│   ├── .github
+│   │   └── workflows
+│   │           └──python-publish.yml
+│   └── resources
+│       ├── ai_icon.png
+│       ├── close_icon.png
+│       ├── minimize_icon.png
+│       ├── paddleocr.zip
+│       ├── shortcuts.png
+│       ├── title_icon.png
+│       ├── user_icon.png
+│       └── tk_color_chart.png
+│
+├── run.py
+├── setup.py
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+└── LICENSE
