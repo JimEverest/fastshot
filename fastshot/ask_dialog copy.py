@@ -1,6 +1,7 @@
 # ask_dialog.py
 
 import tkinter as tk
+from tkinter import font
 from PIL import ImageTk, Image
 import threading
 import time
@@ -32,10 +33,7 @@ class AskDialog:
         # Set the window icon
         self.set_window_icon()
         # Existing initialization code...
-        # Comment out the resize job initialization
-        # self.resize_job = None  # Initialize a variable to hold the after job ID
-        # Bind window resize event
-        # self.dialog_window.bind("<Configure>", self.on_window_resize)
+        self.resize_job = None  # Initialize a variable to hold the after job ID
 
         # Disable interactions with the image window while the dialog is open
         if self.image_window:
@@ -57,8 +55,9 @@ class AskDialog:
         # Handle window close event
         self.dialog_window.protocol("WM_DELETE_WINDOW", self.clean_and_close)
 
-        # Bind window resize event (commented out to prevent flickering)
-        # self.dialog_window.bind("<Configure>", self.on_window_resize)
+        # Bind window resize event
+        self.dialog_window.bind("<Configure>", self.on_window_resize)
+
 
     def set_window_icon(self):
         # Load the icon image
@@ -75,6 +74,7 @@ class AskDialog:
         else:
             print(f"Icon file not found: {icon_path}")
 
+
     def create_main_frame(self):
         # Main frame
         self.main_frame = ctk.CTkFrame(self.dialog_window)
@@ -87,14 +87,34 @@ class AskDialog:
         self.create_input_area()
 
     def create_conversation_display(self):
-        # Scrollable frame for conversation
-        self.conversation_frame = ctk.CTkScrollableFrame(self.main_frame)
-        self.conversation_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Create a canvas
+        self.canvas = tk.Canvas(
+            self.main_frame,
+            bg=ctk.ThemeManager.theme["CTkFrame"]["fg_color"][1],
+            highlightthickness=0
+        )
+        self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+        # Add a scrollbar
+        self.scrollbar = ctk.CTkScrollbar(self.main_frame, orientation="vertical", command=self.canvas.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Create a frame inside the canvas
+        self.conversation_frame = tk.Frame(self.canvas, bg=ctk.ThemeManager.theme["CTkFrame"]["fg_color"][1])
+        self.canvas.create_window((0, 0), window=self.conversation_frame, anchor='nw')
+
+        # Bind the frame to the canvas scroll region
+        self.conversation_frame.bind("<Configure>", self.on_conversation_frame_configure)
+
+
+    def on_conversation_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        
     def create_input_area(self):
         # Input frame
         self.input_frame = ctk.CTkFrame(self.main_frame)
-        self.input_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=10)
+        self.input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
         # Thumbnail image
         self.show_thumbnail()
@@ -119,6 +139,7 @@ class AskDialog:
         self.user_entry = ctk.CTkTextbox(self.input_frame, height=90)
         self.user_entry.pack(fill=tk.BOTH, side=tk.LEFT, expand=True, padx=(10, 5))
         self.user_entry.bind("<Shift-Return>", self.on_submit_click)
+
 
     def show_thumbnail(self):
         # If image_window is not None and has an image, use it
@@ -237,7 +258,7 @@ class AskDialog:
                 user_content = [user_content, image_content]
                 self.image_changed = False  # Reset the flag
             else:
-                user_content = user_input
+                user_content =  user_input
 
             self.messages.append({
                 "role": "user",
@@ -282,6 +303,10 @@ class AskDialog:
             self.display_message_item(content_frame, message_content, bg_color, sender)
 
         # Scroll to the bottom
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(1.0)
+
+    def scroll_to_bottom(self):
         self.conversation_frame.update_idletasks()
         self.conversation_frame._parent_canvas.yview_moveto(1.0)
 
@@ -299,15 +324,13 @@ class AskDialog:
                 image_photo = ImageTk.PhotoImage(image)
                 image_label = ctk.CTkLabel(parent_frame, image=image_photo, text="")
                 image_label.image = image_photo  # Keep a reference
-                image_label.pack(side=tk.TOP, anchor=alignment, padx=5, paASdy=5)
+                image_label.pack(side=tk.TOP, anchor=alignment, padx=5, pady=5)
         else:
             # Handle text content
             text = item if isinstance(item, str) else item.get('text', '')
 
-            # Calculate wraplength based on current window width
-            wraplength = self.dialog_window.winfo_width() - 150
-            if wraplength <= 0:
-                wraplength = 100  # Minimum wraplength
+            # Calculate wraplength safely
+            wraplength = max(self.dialog_window.winfo_width() - 150, 100)
 
             # Create a CTkFrame to simulate bubble
             bubble_frame = ctk.CTkFrame(
@@ -317,68 +340,50 @@ class AskDialog:
             )
             bubble_frame.pack(side=tk.TOP, anchor=alignment, padx=5, pady=5)
 
-            # Create a tk.Text widget inside the bubble_frame
-            text_widget = tk.Text(
+            # Create a tk.Message widget inside the bubble_frame
+            message_widget = tk.Message(
                 bubble_frame,
-                width=1,
-                height=1,
+                text=text,
                 bg=bg_color,
                 fg="white",
-                bd=0,
-                padx=10,
-                pady=10,
-                wrap='word',
                 font=("Arial", 12),
-                relief='flat',
-                highlightthickness=0,
+                width=wraplength,
+                padx=10,
+                pady=10
             )
-            text_widget.insert('1.0', text)
-            text_widget.configure(state='disabled')
-            text_widget.pack(fill=tk.BOTH, expand=True)
-
-            # Adjust the width
-            text_widget.configure(width=wraplength)
-
-            # Update and calculate the required height
-            text_widget.update_idletasks()
-            line_count = int(text_widget.count('1.0', 'end', 'displaylines')[0])
-            text_widget.configure(height=line_count)
+            message_widget.pack(fill=tk.BOTH, expand=True)
+            # Ensure minimum height
+            # bubble.update_idletasks()
+            # current_height = bubble.winfo_height()
+            # if current_height < 40:
+            #     bubble.configure(height=40)
 
 
-    # Commented out resizing functions to prevent flickering
-    # def on_window_resize(self, event):
-    #     if self.resize_job is not None:
-    #         self.dialog_window.after_cancel(self.resize_job)
-    #     self.resize_job = self.dialog_window.after(200, self.resize_bubbles)  # Adjust delay as needed
+    def on_window_resize(self, event):
+        pass
+        # if self.resize_job is not None:
+        #     self.dialog_window.after_cancel(self.resize_job)
+        # self.resize_job = self.dialog_window.after(200, self.resize_bubbles)
 
-    # def resize_bubbles(self):
-    #     self.resize_job = None  # Reset the job ID
-    #     try:
-    #         new_wraplength = self.dialog_window.winfo_width() - 150  # Adjust as needed
-    #         if new_wraplength <= 0:
-    #             new_wraplength = 100  # Set a minimum wraplength
+    def resize_bubbles(self):
+        self.resize_job = None
+        new_wraplength = max(self.dialog_window.winfo_width() - 150, 100)
+        try:
+            for widget in self.conversation_frame.winfo_children():
+                content_frames = widget.winfo_children()
+                for content_frame in content_frames:
+                    bubbles = content_frame.winfo_children()
+                    for bubble_frame in bubbles:
+                        if isinstance(bubble_frame, ctk.CTkFrame):
+                            bubble_frame.configure(width=new_wraplength + 20)
+                            message_widgets = bubble_frame.winfo_children()
+                            for message_widget in message_widgets:
+                                if isinstance(message_widget, tk.Message):
+                                    message_widget.configure(width=new_wraplength)
+        except Exception as e:
+            print(f"Exception during resize: {e}")
 
-    #         for widget in self.conversation_frame.winfo_children():
-    #             content_frames = widget.winfo_children()
-    #             for content_frame in content_frames:
-    #                 bubbles = content_frame.winfo_children()
-    #                 for bubble_frame in bubbles:
-    #                     if isinstance(bubble_frame, ctk.CTkFrame):
-    #                         # Adjust the width of the bubble_frame
-    #                         bubble_frame.configure(width=new_wraplength + 20)
-    #                         # Get the text widget inside the bubble_frame
-    #                         text_widgets = bubble_frame.winfo_children()
-    #                         for text_widget in text_widgets:
-    #                             if isinstance(text_widget, tk.Text):
-    #                                 # Adjust the width of the text widget
-    #                                 text_widget.configure(width=new_wraplength)
-    #                                 # Update and get new line count
-    #                                 text_widget.update_idletasks()
-    #                                 line_count = int(text_widget.index('end-1c').split('.')[0])
-    #                                 # Set the new height
-    #                                 text_widget.configure(height=line_count)
-    #     except Exception as e:
-    #         print(f"Exception during resize: {e}")
+
 
     def ask_dummy(self):
         # Simulate sending messages to OpenAI GPT-4V model

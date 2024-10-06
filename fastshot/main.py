@@ -34,6 +34,10 @@ from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
 from fastshot.ask_dialog import AskDialog
 
+#plugins
+from fastshot.plugin_ocr import PluginOCR
+# from fastshot.plugin_ask import PluginAsk
+
 class SnipasteApp:
     def __init__(self):
         self.root = tk.Tk()
@@ -46,7 +50,9 @@ class SnipasteApp:
         self.config = self.load_config()
         self.print_config_info()
         self.check_and_download_models()
-        self.load_plugins()
+        # # self.load_plugins()
+        self.plugins['fastshot.plugin_ocr']=PluginOCR()
+        # self.plugins['fastshot.plugin_ask']=PluginAsk()
 
         # Initialize the hotkey listener
         self.ask_dialog = None  # Reference to AskDialog instance
@@ -206,15 +212,15 @@ class SnipasteApp:
             print("PaddleOCR 模型文件已存在。")
             
 
-    def load_plugins(self):
-        plugin_modules = {
-            'fastshot.plugin_ocr': 'PluginOCR',
-            'fastshot.plugin_ask': 'PluginAsk'
-        }
-        for module_name, class_name in plugin_modules.items():
-            module = importlib.import_module(module_name)
-            plugin_class = getattr(module, class_name)
-            self.plugins[module_name] = plugin_class()
+    # def load_plugins(self):
+    #     plugin_modules = {
+    #         'fastshot.plugin_ocr': 'PluginOCR',
+    #         'fastshot.plugin_ask': 'PluginAsk'
+    #     }
+    #     for module_name, class_name in plugin_modules.items():
+    #         module = importlib.import_module(module_name)
+    #         plugin_class = getattr(module, class_name)
+    #         self.plugins[module_name] = plugin_class()
 
     def setup_hotkey_listener(self):
         def on_activate_snip():
