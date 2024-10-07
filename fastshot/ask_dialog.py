@@ -299,7 +299,7 @@ class AskDialog:
                 image_photo = ImageTk.PhotoImage(image)
                 image_label = ctk.CTkLabel(parent_frame, image=image_photo, text="")
                 image_label.image = image_photo  # Keep a reference
-                image_label.pack(side=tk.TOP, anchor=alignment, padx=5, paASdy=5)
+                image_label.pack(side=tk.TOP, anchor=alignment, padx=5, pady=5)
         else:
             # Handle text content
             text = item if isinstance(item, str) else item.get('text', '')

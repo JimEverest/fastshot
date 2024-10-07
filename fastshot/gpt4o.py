@@ -5,26 +5,26 @@ import json
 import base64
 import configparser
 
-# _config = configparser.ConfigParser()
-# config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
-# _config.read(config_path, encoding='utf-8')
-
 _config = configparser.ConfigParser()
-# 获取运行时路径
-def get_resource_path(relative_path):
-    """ Get absolute path to resource, works for both dev and PyInstaller bundled environments """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    resource_path=os.path.join(base_path, relative_path)
-    print("-----------------------------------> resource_path: ",resource_path)
-    return os.path.join(base_path, relative_path)
-
-# 使用 get_resource_path 查找 config.ini
-config_path = get_resource_path(os.path.join('fastshot', 'config.ini'))
+config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
 _config.read(config_path, encoding='utf-8')
+
+# _config = configparser.ConfigParser()
+# # 获取运行时路径
+# def get_resource_path(relative_path):
+#     """ Get absolute path to resource, works for both dev and PyInstaller bundled environments """
+#     try:
+#         # PyInstaller creates a temp folder and stores path in _MEIPASS
+#         base_path = sys._MEIPASS
+#     except Exception:
+#         base_path = os.path.abspath(".")
+#     resource_path=os.path.join(base_path, relative_path)
+#     print("-----------------------------------> resource_path: ",resource_path)
+#     return os.path.join(base_path, relative_path)
+
+# # 使用 get_resource_path 查找 config.ini
+# config_path = get_resource_path(os.path.join('fastshot', 'config.ini'))
+# _config.read(config_path, encoding='utf-8')
 
 
 # open ai
