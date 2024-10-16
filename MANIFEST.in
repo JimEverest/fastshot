@@ -8,3 +8,4 @@ include fastshot/resources/minimize_icon.png
 include fastshot/resources/title_icon.png
 include fastshot/env.bat
 recursive-include fastshot/web * 
+recursive-include fastshot/plugins * 

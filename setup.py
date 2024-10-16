@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='1.1.6',
+    version='1.1.7',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -24,6 +24,7 @@ setup(
         'fastshot': [
             'config.ini', 
             '_config_reset.ini',
+            'plugins/*',
             'web/templates/*.html',
             'web/static/css/*.css',
             'web/static/js/*.js',
