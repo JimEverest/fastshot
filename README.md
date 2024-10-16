@@ -185,59 +185,137 @@ Fastshot is designed to seamlessly integrate into your workflow without altering
 By providing powerful tools for capturing, annotating, and sharing screen content, Fastshot is an indispensable asset for anyone who requires efficient multitasking capabilities in their daily activities.
 
 
+
 ## Plugin Mechanism
-Fastshot supports a plugin mechanism, allowing for functionality extensions to meet various business needs. You can develop custom plugins to enhance or modify the tool's capabilities.
 
-1. Create a Plugin Class: Your plugin should be a Python class with the desired functionality. For example, an OCR plugin might look like this:
+The plugin system in Fastshot is designed to be simple yet powerful, enabling developers to add custom functionalities without modifying the core application code. Plugins are Python modules that adhere to a specific interface, allowing the main application to load, manage, and execute them seamlessly.
+
+###  How the Plugin System Works
+- **Plugin Discovery:** On startup, Fastshot scans the plugins directory for plugin modules.
+- **Dynamic Loading:** The application dynamically imports each plugin using Python's importlib.
+- **Metadata Extraction:** Each plugin provides metadata (e.g., name, ID, description) through a get_plugin_info() function.
+- **Hotkey Registration:** Plugins specify default keyboard shortcuts and activation criteria (e.g., pressing the Alt key three times). The main application registers these hotkeys.
+- **Execution:** When a plugin's activation criteria are met, the main application calls the plugin's run(app_context) function, passing the application context for interaction.
+
+###  Plugin Structure
+A plugin can be a single Python file placed directly in the plugins directory or a package (folder with an __init__.py file) if it requires multiple modules or resources.
+
+####  Plugin Metadata
+Each plugin must define a get_plugin_info() function that returns a dictionary with the following keys:
+- **name**: Human-readable name of the plugin.
+- **id**: Unique identifier for the plugin.
+- **description**: Brief description of the plugin's functionality.
+- **author**: Author's name.
+- **version**: Version of the plugin.
+- **default_shortcut**: Default keyboard shortcut to activate the plugin (e.g., 'alt').
+- **press_times**: Number of consecutive times the shortcut key must be pressed to activate the plugin.
+- **enabled**: Boolean indicating whether the plugin is enabled by default.
+
+####  Plugin Entry Point
+Each plugin must implement a run(app_context) function, which is the entry point when the plugin is activated. The app_context parameter provides access to the main application and allows the plugin to interact with it.
+
+###  Developing a Plugin
+Follow these steps to create a plugin for Fastshot.
+
+####  Step 1: Create the Plugin File
+Navigate to the plugins directory in the Fastshot application.
+Create a new Python file for your plugin (e.g., my_plugin.py).
+
+####  Step 2: Define Plugin Metadata
+In your plugin file, define the get_plugin_info() function:
 ```python
-from paddleocr import PaddleOCR
-from PIL import Image
-import win32clipboard
+def get_plugin_info():
+    """Returns metadata about the plugin."""
+    return {
+        'name': 'My Plugin',
+        'id': 'my_plugin',
+        'description': 'A plugin that does something useful.',
+        'author': 'Your Name',
+        'version': '1.0',
+        'default_shortcut': 'alt',
+        'press_times': 3,
+        'enabled': True
+    }
+```
+Note: Adjust the default_shortcut and press_times to suit your plugin's activation method.
+
+####  Step 3: Implement the run Function
+Implement the run(app_context) function, which contains the code to be executed when the plugin is activated:
+
+```python
+def run(app_context):
+    """The main function that gets called when the plugin is activated."""
+    # Your plugin code here
+    print("My Plugin has been activated!")
+```
+Example: You might display a message box, manipulate application data, or perform any desired action.
+####  Step 4: Use the Application Context (Optional)
+If your plugin needs to interact with the main application, use the app_context parameter:
+
+```python
+def run(app_context):
+    """The main function that gets called when the plugin is activated."""
+    # Access application attributes or methods
+    app_context.some_method()
+```
+Note: Refer to the application documentation for available methods and attributes.
+####  Step 5: Test the Plugin
+Start the Fastshot application.
+Activate the plugin by pressing the specified shortcut key the required number of times within one second.
+Verify that the plugin behaves as expected.
+
+###  Example Plugin
+Below is an example of a simple plugin that displays a "Hello, World!" message when activated.
+
+```python
+# plugins/plugin_hello_world.py
 import tkinter as tk
+from tkinter import messagebox
 
-class PluginOCR:
-    def __init__(self):
-        self.ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
+def get_plugin_info():
+    """Returns metadata about the plugin."""
+    return {
+        'name': 'Hello World Plugin',
+        'id': 'plugin_hello_world',
+        'description': 'Displays a Hello World message.',
+        'author': 'Your Name',
+        'version': '1.0',
+        'default_shortcut': 'alt',
+        'press_times': 3,
+        'enabled': True
+    }
 
-    def ocr(self, image):
-        result = self.ocr_engine.ocr(image, cls=True)
-        ocr_text = "\n".join([line[1][0] for res in result for line in res])
-        self.copy_to_clipboard(ocr_text)
-        return ocr_text
-
-    def copy_to_clipboard(self, text):
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
-        win32clipboard.CloseClipboard()
-
-    def show_message(self, message, parent):
-        label = tk.Label(parent, text=message, bg="yellow", fg="black", font=("Helvetica", 10))
-        label.pack(side="bottom", fill="x")
-        parent.after(3000, label.destroy)
+def run(app_context):
+    """The main function that gets called when the plugin is activated."""
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showinfo("Hello Plugin", "Hello, World!")
+    root.destroy()
 ```
-2. Register the Plugin: In the SnipasteApp class, you can register your plugin by adding it to the plugin list.
-```python
-class SnipasteApp:
-    def load_plugins(self):
-        plugin_modules = ['fastshot.plugin_ocr']  # Add your plugin module here
-        for module_name in plugin_modules:
-            module = importlib.import_module(module_name)
-            plugin_class = getattr(module, 'PluginOCR')
-            self.plugins[module_name] = plugin_class()
-```
+Activation: Press the Alt key three times within one second to activate this plugin.
 
-3. Invoke the Plugin: You can invoke the plugin from your application code, such as from a menu item.
-```python
-def ocr(self):
-    plugin = self.app.plugins.get('fastshot.plugin_ocr')
-    if plugin:
-        img_path = 'temp.png'
-        self.img_label.zoomed_image.save(img_path)
-        result = plugin.ocr(img_path)
-        plugin.show_message("OCR result updated in clipboard", self.img_window)
-```
-By following these steps, you can create and integrate custom plugins to extend the functionality of Fastshot.
+###  Plugin Configuration
+Default Shortcuts: Plugins specify default shortcuts in their metadata.
+User Configuration: In future versions, users will be able to modify plugin settings (e.g., shortcuts, enable/disable) through the application's web portal or configuration files.
+Conflict Avoidance: Ensure your plugin's shortcut doesn't conflict with existing shortcuts.
+
+###  Best Practices
+Unique IDs: Assign a unique id to your plugin to prevent conflicts.
+Error Handling: Include try-except blocks in your plugin code to handle exceptions gracefully.
+Minimal Impact: Ensure your plugin doesn't negatively impact the application's performance or stability.
+Documentation: Comment your code and provide clear explanations of your plugin's functionality.
+Security: Avoid executing untrusted code and be cautious with file and network operations.
+
+###  Security Considerations
+Trust: Only use plugins from trusted sources to prevent security risks.
+Sandboxing: Currently, plugins run with the same permissions as the main application. Be mindful of this when developing plugins.
+Validation: Future versions may include security enhancements, such as plugin signing or sandboxing mechanisms.
+
+###  Contributing Plugins
+Share Your Plugin: If you've developed a plugin that could benefit others, consider contributing it to the project.
+Contribution Guidelines: Follow the project's contribution guidelines for submitting plugins.
+Collaboration: Engage with the community to improve and expand plugin functionalities.
+
 
 
 
@@ -246,7 +324,7 @@ By following these steps, you can create and integrate custom plugins to extend 
 1. ~~tk window force trigger~~
 2. ~~ppocr[Default]~~
 3. ~~screenpen integration~~
-4. hyder
+4. ~~hyder~~
 5. ~~transprent window~~
 6. ~~fixed on top~~
 7. pyinstaller
@@ -257,4 +335,18 @@ By following these steps, you can create and integrate custom plugins to extend 
 12. ~~Documents~~
 13. ~~config-env~~
 14. copy&paste image into the Ask Dialog
-15. ~~Global Ask Dialog~~
+15. ~~Global Ask Dialog~~AS
+
+17. predefined prompt for ask
+18. D-board name
+19. OCR Packaging.
+
+
+
+
+20. ~~透明度单向循环。（100-->90-->80-->70-->60-->50-->40-->30-->20-->10 --> 100 --> ......)~~
+21. tk window force bring to front again
+22. tk window trigger clean previous window.
+
+16. 2nd color for screenpen + Highlighter
+

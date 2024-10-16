@@ -9,3 +9,5 @@ venv/
 *.egg-info/
 dist/
 build/
+decoded/*
+

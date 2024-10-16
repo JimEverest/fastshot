@@ -89,6 +89,9 @@ def toggle_always_on_top():
 
 class HotkeyListener:
     def __init__(self, config, root, app):
+        self.plugin_shortcuts = {}
+        self.plugin_key_counts = {}
+        self.plugin_last_press_times = {}
         self.config = config
         self.root = root  # Tkinter root window
         self.app = app  # Reference to main application
@@ -96,6 +99,27 @@ class HotkeyListener:
         self.listener = None
         self.ctrl_press_count = 0
         self.ctrl_last_release_time = 0.0
+
+    def register_plugin_hotkeys(self):
+        for plugin_id, plugin_data in self.app.plugins.items():
+            try:
+                plugin_info = plugin_data['info']
+                if plugin_info.get('enabled', True):
+                    key_str = plugin_info.get('default_shortcut')
+                    press_times = int(plugin_info.get('press_times', 1))
+                    self.register_plugin_hotkey(plugin_id, key_str, press_times)
+                    print(f"Registered plugin hotkey: {plugin_info['name']}, key: {key_str}, press_times: {press_times}")
+            except Exception as e:
+                print(f"Error registering plugin hotkey for {plugin_id}: {e}")
+                continue
+
+    def register_plugin_hotkey(self, plugin_id, key_str, press_times):
+        self.plugin_shortcuts[key_str] = {
+            'plugin_id': plugin_id,
+            'press_times': press_times
+        }
+        self.plugin_key_counts[key_str] = 0
+        self.plugin_last_press_times[key_str] = 0
 
     def load_hotkeys(self):
         shortcuts = self.config['Shortcuts']
@@ -128,12 +152,38 @@ class HotkeyListener:
         self.ask_dialog_time_window = float(shortcuts.get('hotkey_ask_dialog_time_window', '1.0'))
 
     def start(self):
+        print("Starting HotkeyListener") 
         self.listener = keyboard.Listener(
             on_press=self.on_press,
             on_release=self.on_release)
+        self.register_plugin_hotkeys()  # Add this line
         self.listener.start()
 
+
+    def get_key_char(self, key):
+        if isinstance(key, keyboard.Key):
+            # Handle special keys
+            if key == keyboard.Key.alt or key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
+                return 'alt'
+            elif key == keyboard.Key.ctrl or key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+                return 'ctrl'
+            elif key == keyboard.Key.shift or key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
+                return 'shift'
+            elif key == keyboard.Key.cmd:
+                return 'cmd'
+            # Add other special keys as needed
+            else:
+                return str(key).lower().replace('key.', '')
+        else:
+            try:
+                return key.char.lower()
+            except AttributeError:
+                return str(key).lower().replace('key.', '')
+
     def on_press(self, key):
+        print(f"Key pressed: {key}")
+        # Existing code...
+        # ---------------------------------------
         self.hotkey_topmost_on.press(self.listener.canonical(key))
         self.hotkey_topmost_off.press(self.listener.canonical(key))
         self.hotkey_opacity_down.press(self.listener.canonical(key))
@@ -141,13 +191,16 @@ class HotkeyListener:
         self.hotkey_snip.press(self.listener.canonical(key))
 
         # Handle Ctrl key presses
+        # ---------------------------------------
         if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
             pass  # Do nothing on press
         else:
             # Any other key resets the count
             self.ctrl_press_count = 0
+ 
 
     def on_release(self, key):
+        print(f"Key released: {key}") 
         self.hotkey_topmost_on.release(self.listener.canonical(key))
         self.hotkey_topmost_off.release(self.listener.canonical(key))
         self.hotkey_opacity_down.release(self.listener.canonical(key))
@@ -174,6 +227,36 @@ class HotkeyListener:
             # Any other key resets the count
             self.ctrl_press_count = 0
 
+        # ---------------------------------------
+        # Handle plugin hotkeys
+        key_char = self.get_key_char(key)
+        print(f"Key pressed: {key_char}")  # Debug statement
+        if key_char in self.plugin_shortcuts:
+            current_time = time.time()
+            last_press_time = self.plugin_last_press_times.get(key_char, 0)
+            if current_time - last_press_time > 1.0:
+                self.plugin_key_counts[key_char] = 1
+            else:
+                self.plugin_key_counts[key_char] += 1
+
+            self.plugin_last_press_times[key_char] = current_time
+
+            if self.plugin_key_counts[key_char] >= self.plugin_shortcuts[key_char]['press_times']:
+                plugin_id = self.plugin_shortcuts[key_char]['plugin_id']
+                self.activate_plugin(plugin_id)
+                self.plugin_key_counts[key_char] = 0
+
+    def activate_plugin(self, plugin_id):
+        plugin_data = self.app.plugins.get(plugin_id)
+        if plugin_data:
+            plugin_module = plugin_data['module']
+            try:
+                plugin_module.run(self.app)
+                print(f"Activated plugin: {plugin_data['info']['name']}")
+            except Exception as e:
+                print(f"Error activating plugin {plugin_id}: {e}")
+
+
     def toggle_topmost_on(self):
         toggle_always_on_top()
 
@@ -184,7 +267,11 @@ class HotkeyListener:
         hwnd = get_foreground_window()
         if hwnd:
             current_opacity = get_window_opacity(hwnd)
-            new_opacity = max(0.1, current_opacity - 0.1)
+            if current_opacity > 0.1:
+                new_opacity = current_opacity - 0.1
+            else:
+                new_opacity = 1.0  # Reset to 100% opacity
+            new_opacity = round(new_opacity, 1)  # Ensure precision
             set_window_opacity(hwnd, new_opacity)
             print(f"Window opacity decreased to {new_opacity * 100:.0f}%")
 
@@ -192,7 +279,11 @@ class HotkeyListener:
         hwnd = get_foreground_window()
         if hwnd:
             current_opacity = get_window_opacity(hwnd)
-            new_opacity = min(1.0, current_opacity + 0.1)
+            if current_opacity < 1.0:
+                new_opacity = current_opacity + 0.1
+            else:
+                new_opacity = 0.1  # Reset to 10% opacity
+            new_opacity = round(new_opacity, 1)  # Ensure precision
             set_window_opacity(hwnd, new_opacity)
             print(f"Window opacity increased to {new_opacity * 100:.0f}%")
 

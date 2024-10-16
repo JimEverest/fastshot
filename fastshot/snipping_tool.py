@@ -3,6 +3,8 @@ from PIL import Image
 import mss
 import mss.tools
 import io
+import win32gui
+import win32con
 
 class SnippingTool:
     def __init__(self, root, monitors, on_screenshot):
@@ -14,6 +16,9 @@ class SnippingTool:
         self.rects = []
 
     def start_snipping(self):
+        # Clear any existing overlays
+        self.exit_snipping()
+
         self.snipping = True
         self.overlays = []
         self.canvases = []
@@ -21,9 +26,11 @@ class SnippingTool:
 
         for monitor in self.monitors:
             overlay = tk.Toplevel(self.root)
+            overlay.title("overlay_snipping")
             overlay.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
             overlay.configure(bg='blue')
             overlay.attributes('-alpha', 0.3)
+            overlay.attributes('-topmost', True)  # Ensure the window is always on top
             overlay.bind('<Escape>', self.exit_snipping)
 
             canvas = tk.Canvas(overlay, cursor="cross")
@@ -36,15 +43,35 @@ class SnippingTool:
             self.canvases.append(canvas)
             self.rects.append(None)
 
+            # Bring the overlay window to the front
+            self.bring_window_to_front(overlay)
+
         self.root.update_idletasks()
         self.root.update()
 
         self.start_x = self.start_y = self.end_x = self.end_y = 0
 
+    def bring_window_to_front(self, window):
+        # Get the window handle (HWND)
+        hwnd = int(window.frame(), 16)  # Convert hex string to integer
+        # Use win32gui to bring the window to front
+        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                              win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+        win32gui.SetForegroundWindow(hwnd)
+        win32gui.BringWindowToTop(hwnd)
+        # Force the window to be the active window
+        win32gui.SetActiveWindow(hwnd)
+
     def exit_snipping(self, event=None):
         self.snipping = False
         for overlay in self.overlays:
-            overlay.destroy()
+            try:
+                overlay.destroy()
+            except Exception as e:
+                print(f"Error destroying overlay: {e}")
+        self.overlays = []
+        self.canvases = []
+        self.rects = []
 
     def on_mouse_down(self, event):
         self.start_x = event.x_root
@@ -81,10 +108,10 @@ class SnippingTool:
 
         with mss.mss() as sct:
             monitor = {
-                "top": y1,
-                "left": x1,
-                "width": x2 - x1,
-                "height": y2 - y1
+                "top": int(y1),
+                "left": int(x1),
+                "width": int(x2 - x1),
+                "height": int(y2 - y1)
             }
             screenshot = sct.grab(monitor)
             img = mss.tools.to_png(screenshot.rgb, screenshot.size)
@@ -95,4 +122,3 @@ class SnippingTool:
         img = Image.open(io.BytesIO(img))
         img = img.convert('RGB')
         self.on_screenshot(img)
-

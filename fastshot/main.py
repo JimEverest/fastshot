@@ -34,6 +34,12 @@ from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
 from fastshot.ask_dialog import AskDialog
 
+
+import importlib
+import pkgutil
+import time
+
+
 #plugins
 from fastshot.plugin_ocr import PluginOCR
 # from fastshot.plugin_ask import PluginAsk
@@ -47,10 +53,11 @@ class SnipasteApp:
         self.snipping_tool = SnippingTool(self.root, self.monitors, self.on_screenshot)
         self.windows = []
         self.plugins = {}
+        
         self.config = self.load_config()
         self.print_config_info()
         self.check_and_download_models()
-        # # self.load_plugins()
+        self.load_plugins()
         self.plugins['fastshot.plugin_ocr']=PluginOCR()
         # self.plugins['fastshot.plugin_ask']=PluginAsk()
 
@@ -70,6 +77,34 @@ class SnipasteApp:
         # Start the Flask web app
         self.start_flask_app()
 
+
+    def load_plugins(self):
+        plugins_dir = os.path.join(os.path.dirname(__file__), 'plugins')
+        sys.path.insert(0, plugins_dir)
+
+        for finder, name, ispkg in pkgutil.iter_modules([plugins_dir]):
+            try:
+                plugin_module = importlib.import_module(name)
+                plugin_info = plugin_module.get_plugin_info()
+                self.plugins[plugin_info['id']] = {
+                    'module': plugin_module,
+                    'info': plugin_info
+                }
+                print(f"Loaded plugin: {plugin_info['name']}")
+            except Exception as e:
+                print(f"Failed to load plugin {name}: {e}")
+
+    def setup_plugin_hotkeys(self):
+        for plugin_id, plugin_data in self.plugins.items():
+            plugin_info = plugin_data['info']
+            if plugin_info.get('enabled', True):
+                shortcut_key = plugin_info.get('default_shortcut')
+                press_times = int(plugin_info.get('press_times', 1))
+                self.listener.register_plugin_hotkey(
+                    plugin_id, shortcut_key, press_times)
+
+
+                    
     def start_flask_app(self):
         def run_flask():
             try:
@@ -148,31 +183,6 @@ class SnipasteApp:
             value = self.config['Shortcuts'].get(key, '')
             print(f"{desc}: {value}")
 
-    # def check_and_download_models(self):
-    #     home_dir = os.path.expanduser('~')  #C:\Users\xxxxxxx/
-    #     paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')#C:\Users\xxxxxxx/.paddleocr/whl/
-    #     model_dirs = [
-    #         os.path.join(paddleocr_dir, 'det', 'ch', 'ch_PP-OCRv4_det_infer'),#C:\Users\xxxxxxx/.paddleocr/whl/det/ch/ch_PP-OCRv4_det_infer/
-    #         os.path.join(paddleocr_dir, 'rec', 'ch', 'ch_PP-OCRv4_rec_infer'),#C:\Users\xxxxxxx/.paddleocr/whl/rec/ch/ch_PP-OCRv4_rec_infer/
-    #         os.path.join(paddleocr_dir, 'cls', 'ch_ppocr_mobile_v2.0_cls_infer')#C:\Users\xxxxxxx/.paddleocr/whl/cls/ch_ppocr_mobile_v2.0_cls_infer/
-    #     ]
-    #     models_exist = all(os.path.exists(model_dir) for model_dir in model_dirs)
-    #     if not models_exist:
-    #         print("未找到 PaddleOCR 模型文件，正在下载...")
-    #         download_url = self.config['Paths'].get('download_url')#C:\Users\xxxxxxx/.paddleocr.zip
-    #         zip_path = os.path.join(home_dir, '.paddleocr.zip')
-    #         try:
-    #             urllib.request.urlretrieve(download_url, zip_path)
-    #             print("下载完成，正在解压...")
-    #             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-    #                 zip_ref.extractall(home_dir)
-    #             print("模型文件解压完成。")
-    #             os.remove(zip_path)
-    #         except Exception as e:
-    #             print(f"下载和解压模型文件失败: {e}")
-    #     else:
-    #         print("PaddleOCR 模型文件已存在。")
-
     def check_and_download_models(self):
         home_dir = os.path.expanduser('~')  # C:\Users\xxxxxxx/
         paddleocr_dir = os.path.join(home_dir, '.paddleocr', 'whl')  # C:\Users\xxxxxxx/.paddleocr/whl/
@@ -210,17 +220,7 @@ class SnipasteApp:
                     print(f"下载和解压模型文件失败: {e}")
         else:
             print("PaddleOCR 模型文件已存在。")
-            
 
-    # def load_plugins(self):
-    #     plugin_modules = {
-    #         'fastshot.plugin_ocr': 'PluginOCR',
-    #         'fastshot.plugin_ask': 'PluginAsk'
-    #     }
-    #     for module_name, class_name in plugin_modules.items():
-    #         module = importlib.import_module(module_name)
-    #         plugin_class = getattr(module, class_name)
-    #         self.plugins[module_name] = plugin_class()
 
     def setup_hotkey_listener(self):
         def on_activate_snip():
@@ -246,11 +246,6 @@ class SnipasteApp:
             on_press=for_canonical(lambda key: on_escape() if key == keyboard.Key.esc else None))
         self.listener_escape.start()
 
-    def start_screen_pen_listener(self):
-        # 启动 ScreenPen 的键盘监听器线程
-        keyboard_thread = threading.Thread(target=self.screen_pen.start_keyboard_listener)
-        keyboard_thread.daemon = True
-        keyboard_thread.start()
 
     def on_screenshot(self, img):
         window = ImageWindow(self, img, self.config)

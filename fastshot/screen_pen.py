@@ -95,7 +95,7 @@ class ScreenPen:
             # 移除 WS_EX_TRANSPARENT 样式
             extended_style = extended_style & ~0x20
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, extended_style)
-            self.set_window_opacity(0.15)  # 设置透明度为 15%
+            self.set_window_opacity(0.4)  # 设置透明度为 15%
         else:
             print("Could not find window handle to set drawing mode.")
 
