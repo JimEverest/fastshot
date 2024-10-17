@@ -11,51 +11,59 @@ import queue
 class ScreenPen:
     def __init__(self, master, config):
         self.config = config
-        self.master = master  # 主 Tkinter 根窗口
+        self.master = master  # Main Tkinter root window
 
-        # 创建 Toplevel 窗口
+        # Create Toplevel window
         self.pen_window = tk.Toplevel(master)
-        self.pen_window.overrideredirect(True)  # 移除窗口装饰（标题栏等）
-        self.pen_window.attributes('-topmost', True)  # 窗口置顶
-        self.pen_window.config(cursor="pencil", bg="black")  # 设置鼠标为画笔形状，背景黑色
+        self.pen_window.overrideredirect(True)  # Remove window decorations
+        self.pen_window.attributes('-topmost', True)  # Keep window on top
+        self.pen_window.config(cursor="pencil", bg="black")  # Set cursor and background
 
-        # 设置唯一的窗口标题
+        # Set unique window title
         self.window_title = "ScreenPenOverlay"
         self.pen_window.title(self.window_title)
 
-        # 确保窗口已经被创建
+        # Ensure window is created
         self.pen_window.update()
 
-        # 创建画布
+        # Create canvas
         self.canvas = tk.Canvas(self.pen_window, bg='black', highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        # 从配置文件读取画笔参数
+        # Read pen parameters from config
         self.pen_color = self.config['ScreenPen'].get('pen_color', 'red')
         self.pen_width = self.config['ScreenPen'].getint('pen_width', 3)
         self.smooth_factor = self.config['ScreenPen'].getint('smooth_factor', 3)
 
-        self.drawing = False  # 初始状态为非绘图模式
+        # Read highlighter parameters from config
+        self.highlighter_color = self.config['ScreenPen'].get('highlighter_color', '#FFFF00')  # Default to semi-transparent yellow
+        # Format: '#RRGGBBAA', where AA is alpha in hex (80 is approximately 50% transparency)
 
-        # 初始化撤销和恢复栈
-        self.undo_stack = []  # 用于存储所有已完成的路径
-        self.redo_stack = []  # 用于存储撤销后的路径
-        self.current_path = []  # 当前正在绘制的路径
+        self.drawing = False  # Initial state is not drawing
+        self.pen_type = 'pen'  # Start with normal pen
+        self.current_rect = None  # For Highlighter rectangle
 
-        # 初始化时不显示窗口
+        # Initialize undo and redo stacks
+        self.undo_stack = []  # Stores completed paths
+        self.redo_stack = []  # Stores undone paths
+        self.current_path = []  # Current drawing path
+        self.rectangles = []  # Stores drawn rectangles
+
+        # Initially hide the window
         self.pen_window.withdraw()
 
-        # 鼠标事件绑定
+        # Mouse event bindings
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
         self.canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
+        self.canvas.bind("<Button-3>", self.toggle_pen_type)  # Right-click to toggle pen type
 
-        # 初始化队列用于线程间通信
+        # Initialize queue for thread communication
         self.queue = queue.Queue()
 
     def start_keyboard_listener(self):
         print("Starting keyboard listener")
-        # 捕捉热键
+        # Capture hotkeys
         hotkeys = {
             self.config['Shortcuts'].get('hotkey_screenpen_toggle', '<ctrl>+x+c'): lambda: self.queue.put(self.toggle_drawing_mode),
             self.config['Shortcuts'].get('hotkey_screenpen_clear_hide', '<ctrl>+<esc>'): lambda: self.queue.put(self.clear_canvas_and_hide)
@@ -63,45 +71,45 @@ class ScreenPen:
         listener = keyboard.GlobalHotKeys(hotkeys)
         listener.start()
 
-        # 开始处理队列中的任务
+        # Start processing queue tasks
         self.process_queue()
 
     def process_queue(self):
         try:
             while True:
                 func = self.queue.get_nowait()
-                func()  # 在主线程中执行函数
+                func()  # Execute function in main thread
         except queue.Empty:
             pass
-        self.master.after(50, self.process_queue)  # 每 50 毫秒检查一次队列
+        self.master.after(50, self.process_queue)  # Check queue every 50ms
 
     def get_hwnd(self):
         """
-        获取窗口句柄
+        Get window handle
         """
         hwnd = win32gui.FindWindow(None, self.window_title)
         return hwnd
 
     def set_window_to_draw(self):
         """
-        将窗口设置为绘图模式，确保半透明状态并捕获鼠标事件
+        Set window to drawing mode, ensure semi-transparent state, and capture mouse events
         """
         hwnd = self.get_hwnd()
         if hwnd:
             print("Setting window to drawing mode")
             extended_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-            # 确保 WS_EX_LAYERED 样式被设置
+            # Ensure WS_EX_LAYERED style is set
             extended_style = extended_style | 0x80000
-            # 移除 WS_EX_TRANSPARENT 样式
+            # Remove WS_EX_TRANSPARENT style
             extended_style = extended_style & ~0x20
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, extended_style)
-            self.set_window_opacity(0.4)  # 设置透明度为 15%
+            self.set_window_opacity(0.4)  # Set opacity to 40%
         else:
             print("Could not find window handle to set drawing mode.")
 
     def set_window_opacity(self, opacity):
         """
-        使用 Windows API 设置 Tkinter 窗口的透明度
+        Use Windows API to set Tkinter window opacity
         """
         hwnd = self.get_hwnd()
         if hwnd:
@@ -115,6 +123,11 @@ class ScreenPen:
             print("Exiting drawing mode")
             self.drawing = False
             self.set_window_transparent()
+            # self.pen_window.withdraw()  # Comment out or remove this line
+            # Unbind keyboard events
+            self.pen_window.unbind("<Escape>")
+            self.pen_window.unbind("<Control-z>")
+            self.pen_window.unbind("<Control-y>")
         else:
             print("Entering drawing mode")
             self.drawing = True
@@ -123,21 +136,22 @@ class ScreenPen:
             self.pen_window.deiconify()
             self.set_window_to_draw()
             self.redraw_all_paths()
-            # 绑定键盘事件
+            # Bind keyboard events
             self.pen_window.focus_set()
             self.pen_window.bind("<Escape>", self.on_escape)
             self.pen_window.bind("<Control-z>", lambda event: self.undo_last_action())
             self.pen_window.bind("<Control-y>", lambda event: self.redo_last_action())
 
+
     def set_window_transparent(self):
         """
-        设置窗口为鼠标穿透和透明模式
+        Set window to transparent and click-through mode
         """
         hwnd = self.get_hwnd()
         if hwnd:
             print("Setting window transparent and click-through")
             extended_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-            extended_style = extended_style | 0x80000 | 0x20  # 设置透明和鼠标穿透
+            extended_style = extended_style | 0x80000 | 0x20  # Set transparent and click-through
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, extended_style)
             ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 0, 0x1)
         else:
@@ -149,7 +163,7 @@ class ScreenPen:
 
     def get_current_screen_info(self):
         """
-        获取当前鼠标所在的屏幕尺寸和位置
+        Get the dimensions and position of the screen where the mouse is currently located
         """
         mouse_x, mouse_y = pyautogui.position()
         for monitor in get_monitors():
@@ -157,59 +171,107 @@ class ScreenPen:
                 print(f"Mouse is on screen: {monitor}")
                 return {'x': monitor.x, 'y': monitor.y, 'width': monitor.width, 'height': monitor.height}
 
-        # 默认返回主屏幕信息
+        # Default to primary screen
         print("Mouse is not on any screen, defaulting to primary screen.")
         screen_width, screen_height = pyautogui.size()
         return {'x': 0, 'y': 0, 'width': screen_width, 'height': screen_height}
 
+    def toggle_pen_type(self, event=None):
+        """
+        Toggle between normal pen and highlighter
+        """
+        if self.pen_type == 'pen':
+            self.pen_type = 'highlighter'
+            self.pen_window.config(cursor="cross")  # Change cursor to crosshair
+            print("Switched to Highlighter mode")
+        else:
+            self.pen_type = 'pen'
+            self.pen_window.config(cursor="pencil")  # Change cursor back to pencil
+            print("Switched to Pen mode")
 
     def on_button_press(self, event):
         if self.drawing:
             self.last_x, self.last_y = event.x, event.y
-            self.current_path = [(self.last_x, self.last_y)]  # 开始记录新的路径
-            print(f"Mouse button pressed at: ({self.last_x}, {self.last_y})")
+            if self.pen_type == 'pen':
+                self.current_path = [(self.last_x, self.last_y)]  # Start a new path
+                print(f"Pen down at: ({self.last_x}, {self.last_y})")
+            elif self.pen_type == 'highlighter':
+                # Start drawing rectangle
+                self.current_rect_start = (self.last_x, self.last_y)
+                self.current_rect = None
+                print(f"Highlighter start at: ({self.last_x}, {self.last_y})")
 
     def on_mouse_move(self, event):
         if self.drawing:
             x, y = event.x, event.y
-            print(f"Mouse moved to: ({x}, {y})")
-            self.current_path.append((x, y))  # 记录路径点
-            self.redraw_current_path()  # 仅重绘当前路径
+            if self.pen_type == 'pen':
+                print(f"Pen moved to: ({x}, {y})")
+                self.current_path.append((x, y))  # Record path points
+                self.redraw_current_path()  # Redraw current path
+            elif self.pen_type == 'highlighter':
+                # Update rectangle
+                print(f"Highlighter moved to: ({x}, {y})")
+                self.draw_temporary_rectangle(self.current_rect_start, (x, y))
 
     def on_button_release(self, event):
         print("Mouse button released")
-        if self.drawing and self.current_path:
-            # 将当前路径推入撤销栈（仅保留平滑后的路径）
-            smoothed_path = self.apply_catmull_rom_spline(self.current_path) if len(self.current_path) >= 4 else self.current_path
-            self.undo_stack.append(smoothed_path)  # 保存平滑后的路径
-            self.current_path = []  # 清空当前路径
-            self.redo_stack.clear()  # 清空恢复栈
-            self.redraw_all_paths()  # 重绘所有路径以保持当前绘制的内容
+        if self.drawing:
+            if self.pen_type == 'pen' and self.current_path:
+                # Finalize the current path
+                smoothed_path = self.apply_catmull_rom_spline(self.current_path) if len(self.current_path) >= 4 else self.current_path
+                self.undo_stack.append(('path', smoothed_path))  # Save path with type 'path'
+                self.current_path = []  # Clear current path
+                self.redo_stack.clear()  # Clear redo stack
+                self.redraw_all_paths()  # Redraw everything
+            elif self.pen_type == 'highlighter' and self.current_rect:
+                # Finalize the rectangle
+                rect_coords = self.canvas.coords(self.current_rect)
+                self.undo_stack.append(('rectangle', rect_coords))  # Save rectangle with type 'rectangle'
+                self.current_rect = None
+                self.redo_stack.clear()  # Clear redo stack
+                self.redraw_all_paths()  # Redraw everything
+
+    def draw_temporary_rectangle(self, start, end):
+        """
+        Draw or update the temporary rectangle being drawn
+        """
+        # Delete previous temporary rectangle
+        self.canvas.delete("current_rectangle")
+        # Create new rectangle
+        x1, y1 = start
+        x2, y2 = end
+        self.current_rect = self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill=self.highlighter_color,
+            outline='',  # No outline
+            stipple='gray25',  
+            tags="current_rectangle"
+        )
 
     def redraw_current_path(self):
         """
-        仅重绘当前正在绘制的路径，保留之前的路径
+        Redraw the current path being drawn
         """
-        # 删除当前路径的绘制内容
+        # Delete current path drawing
         self.canvas.delete("current_line")
 
-        # 绘制平滑后的路径
+        # Draw smoothed path
         if len(self.current_path) >= 4:
             smooth_path = self.apply_catmull_rom_spline(self.current_path)
             for i in range(len(smooth_path) - 1):
                 self.canvas.create_line(smooth_path[i], smooth_path[i + 1], fill=self.pen_color, width=self.pen_width, tags="current_line")
         else:
-            # 如果点不足以生成样条曲线，直接绘制原始线条
+            # Draw raw path if not enough points for spline
             for i in range(len(self.current_path) - 1):
                 self.canvas.create_line(self.current_path[i], self.current_path[i + 1], fill=self.pen_color, width=self.pen_width, tags="current_line")
 
     def apply_catmull_rom_spline(self, points):
         """
-        应用 Catmull-Rom 样条曲线平滑路径
+        Apply Catmull-Rom spline to smooth the path
         """
         def catmull_rom(p0, p1, p2, p3, t):
             """
-            Catmull-Rom 样条曲线公式
+            Catmull-Rom spline formula
             """
             t2 = t * t
             t3 = t2 * t
@@ -218,7 +280,7 @@ class ScreenPen:
                 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
             )
 
-        # 生成样条曲线点
+        # Generate spline points
         smooth_points = []
         for i in range(len(points) - 3):
             p0, p1, p2, p3 = points[i], points[i + 1], points[i + 2], points[i + 3]
@@ -229,43 +291,59 @@ class ScreenPen:
 
     def redraw_all_paths(self):
         """
-        重绘所有的路径，包括已完成的和当前正在绘制的路径
+        Redraw all saved paths and rectangles
         """
-        self.canvas.delete("all")  # 清除所有画布内容
-        for path in self.undo_stack:
-            self.draw_path(path)  # 绘制所有已保存的路径
-        self.redraw_current_path()  # 重新绘制当前路径
+        self.canvas.delete("all")  # Clear canvas
+        for item_type, item_data in self.undo_stack:
+            if item_type == 'path':
+                self.draw_path(item_data)
+            elif item_type == 'rectangle':
+                self.draw_rectangle(item_data)
+        self.redraw_current_path()  # Redraw current path
 
     def draw_path(self, path):
         """
-        绘制保存的路径
+        Draw a saved path
         """
         if len(path) < 2:
             return
         for i in range(len(path) - 1):
             self.canvas.create_line(path[i], path[i + 1], fill=self.pen_color, width=self.pen_width)
 
+    def draw_rectangle(self, coords):
+        """
+        Draw a saved rectangle
+        """
+        self.canvas.create_rectangle(
+            coords,
+            fill=self.highlighter_color,
+            outline='',  # No outline
+            stipple='gray25'
+        )
+
     def undo_last_action(self):
         if self.undo_stack:
             print("Undo last action")
-            last_path = self.undo_stack.pop()  # 从撤销栈中弹出最后一条路径
-            self.redo_stack.append(last_path)  # 将其推入恢复栈
-            self.redraw_all_paths()  # 重新绘制所有路径
+            last_item = self.undo_stack.pop()  # Pop last item
+            self.redo_stack.append(last_item)  # Push to redo stack
+            self.redraw_all_paths()  # Redraw everything
 
     def redo_last_action(self):
         if self.redo_stack:
             print("Redo last action")
-            self.undo_stack.append(last_path)  # 将其推入撤销栈
-            self.redraw_all_paths()  # 重新绘制所有路径
+            last_item = self.redo_stack.pop()
+            self.undo_stack.append(last_item)  # Push back to undo stack
+            self.redraw_all_paths()  # Redraw everything
 
     def clear_canvas(self, keep_history=False):
         print("Clearing canvas...")
-        self.canvas.delete("all")  # 清除所有画布内容
+        self.canvas.delete("all")  # Clear canvas
         if not keep_history:
-            self.undo_stack.clear()  # 清空撤销栈
-            self.redo_stack.clear()  # 清空恢复栈
+            self.undo_stack.clear()  # Clear undo stack
+            self.redo_stack.clear()  # Clear redo stack
 
     def clear_canvas_and_hide(self):
         print("Clearing canvas and hiding...")
         self.clear_canvas()
-        self.pen_window.withdraw()  # 隐藏窗口
+        self.pen_window.withdraw()  # Hide window
+        self.drawing = False  # Reset drawing mode

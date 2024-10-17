@@ -4,7 +4,9 @@ import mss
 import mss.tools
 import io
 import win32gui
+import pyautogui
 import win32con
+
 
 class SnippingTool:
     def __init__(self, root, monitors, on_screenshot):
@@ -57,6 +59,7 @@ class SnippingTool:
         # Use win32gui to bring the window to front
         win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                               win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+        pyautogui.press("alt")
         win32gui.SetForegroundWindow(hwnd)
         win32gui.BringWindowToTop(hwnd)
         # Force the window to be the active window

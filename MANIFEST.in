@@ -1,11 +1,6 @@
 include fastshot/config.ini
 include fastshot/_config_reset.ini
-include fastshot/resources/paddleocr.zip
-include fastshot/resources/user_icon.png
-include fastshot/resources/ai_icon.png
-include fastshot/resources/close_icon.png
-include fastshot/resources/minimize_icon.png
-include fastshot/resources/title_icon.png
+recursive-include fastshot/resources * 
 include fastshot/env.bat
 recursive-include fastshot/web * 
 recursive-include fastshot/plugins * 
