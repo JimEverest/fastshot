@@ -336,17 +336,13 @@ Collaboration: Engage with the community to improve and expand plugin functional
 13. ~~config-env~~
 14. copy&paste image into the Ask Dialog
 15. ~~Global Ask Dialog~~AS
-
+16. ~~2nd color for screenpen + Highlighter~~
 17. predefined prompt for ask
 18. D-board name
 19. OCR Packaging.
-
-
-
-
 20. ~~透明度单向循环。（100-->90-->80-->70-->60-->50-->40-->30-->20-->10 --> 100 --> ......)~~
-21. tk window force bring to front again
-22. tk window trigger clean previous window.
+21. ~~tk window force bring to front again~~
+22. ~~tk window trigger clean previous window.~~
 
-16. 2nd color for screenpen + Highlighter
+
 
