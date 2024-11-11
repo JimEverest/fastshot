@@ -150,8 +150,8 @@ class AskDialog:
         # Thumbnail label
         self.thumbnail_label = ctk.CTkLabel(self.input_frame, image=self.thumbnail_photo, text="")
         self.thumbnail_label.pack(side=tk.LEFT, padx=(0, 15))
-        self.thumbnail_label.bind("<Enter>", self.show_image_preview)
-        self.thumbnail_label.bind("<Leave>", self.hide_image_preview)
+        # self.thumbnail_label.bind("<Enter>", self.show_image_preview)
+        # self.thumbnail_label.bind("<Leave>", self.hide_image_preview)
         self.thumbnail_label.bind("<Button-1>", self.upload_image)
 
     def upload_image(self, event=None):

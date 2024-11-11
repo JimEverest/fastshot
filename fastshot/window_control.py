@@ -181,7 +181,7 @@ class HotkeyListener:
                 return str(key).lower().replace('key.', '')
 
     def on_press(self, key):
-        print(f"Key pressed: {key}")
+        # print(f"Key pressed: {key}")
         # Existing code...
         # ---------------------------------------
         self.hotkey_topmost_on.press(self.listener.canonical(key))
@@ -200,7 +200,7 @@ class HotkeyListener:
  
 
     def on_release(self, key):
-        print(f"Key released: {key}") 
+        # print(f"Key released: {key}") 
         self.hotkey_topmost_on.release(self.listener.canonical(key))
         self.hotkey_topmost_off.release(self.listener.canonical(key))
         self.hotkey_opacity_down.release(self.listener.canonical(key))
@@ -230,7 +230,7 @@ class HotkeyListener:
         # ---------------------------------------
         # Handle plugin hotkeys
         key_char = self.get_key_char(key)
-        print(f"Key pressed: {key_char}")  # Debug statement
+        # print(f"Key pressed: {key_char}")  # Debug statement
         if key_char in self.plugin_shortcuts:
             current_time = time.time()
             last_press_time = self.plugin_last_press_times.get(key_char, 0)

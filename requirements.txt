@@ -10,4 +10,5 @@ paddleocr,
 pywin32,
 customtkinter,
 flask,
-configparser
+configparser,
+minio
