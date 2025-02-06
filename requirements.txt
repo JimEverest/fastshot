@@ -11,4 +11,5 @@ pywin32,
 customtkinter,
 flask,
 configparser,
-minio
+minio,
+openai>=1.0.0

@@ -4,10 +4,12 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
 import win32clipboard
 from pynput import keyboard
+import os
 
 from .paint_tool import PaintTool
 from .text_tool import TextTool
 from .ask_dialog import AskDialog  # 导入 AskDialog 类
+from .utils.llm_utils import LLMExtractor, ExtractResultDialog
 
 class ImageWindow:
     def __init__(self, app, img, config):
@@ -32,6 +34,7 @@ class ImageWindow:
         self.draw_history = []
         self.ask_dialog = None  # 添加 AskDialog 的实例变量
         self.is_dialog_open = False  # 用于禁用截图交互
+        self.llm_extractor = LLMExtractor()
 
         self.setup_hotkey_listener()
 
@@ -97,8 +100,12 @@ class ImageWindow:
                 self.ask_dialog.update_dialog_icon_position()
 
     def show_context_menu(self, event):
-        menu = tk.Menu(self.img_window, tearoff=0)
+        self.create_context_menu()
+        self.context_menu.post(event.x_root, event.y_root)
 
+    def create_context_menu(self):
+        self.context_menu = tk.Menu(self.img_window, tearoff=0)
+        
         # 使用 Unicode 字符作为图标
         icons = {
             "Copy": "📋",
@@ -107,9 +114,10 @@ class ImageWindow:
             "Paint": "🎨",
             "Undo": "↺",
             "Exit Edit": "🚪",
-            "Text": "🔤",
+            "Text": "��",
             "OCR": "🧾",
-            "Ask": "💬"  # 新增 Ask 选项
+            "Ask": "💬",
+            "PowerExtract": "🔍"  # 新增图标
         }
 
         commands = {
@@ -121,13 +129,16 @@ class ImageWindow:
             "Exit Edit": self.exit_edit_mode,
             "Text": self.text,
             "OCR": self.ocr,
-            "Ask": self.open_ask_dialog  # 新增 Ask 命令
+            "Ask": self.open_ask_dialog,
+            "PowerExtract": self.power_extract  # 新增命令
         }
 
         for label, icon in icons.items():
-            menu.add_command(label=f"{icon} {label}", command=commands[label])
-
-        menu.post(event.x_root, event.y_root)
+            self.context_menu.add_command(label=f"{icon} {label}", command=commands[label])
+            
+        # 添加分隔符和设置选项
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="⚙️ LLM Settings", command=self.show_llm_settings)
 
     def close(self):
         if self.ask_dialog and self.ask_dialog.dialog_window and self.ask_dialog.dialog_window.winfo_exists():
@@ -175,10 +186,6 @@ class ImageWindow:
         self.img_window.bind('<ButtonPress-1>', self.start_move)
         self.img_window.bind('<B1-Motion>', self.do_move)
         self.img_window.bind('<MouseWheel>', self.zoom)
-
-
-
-
 
     def copy(self):
         output = io.BytesIO()
@@ -236,3 +243,27 @@ class ImageWindow:
 
     def activate_window(self, event):
         self.app.exit_all_modes()
+
+    def show_llm_settings(self):
+        """显示LLM设置窗口"""
+        from fastshot.settings import show_settings
+        settings_window = show_settings(self.img_window, active_tab=2)  # 直接打开GenAI标签页
+
+    def power_extract(self):
+        """执行内容抽取"""
+        # 保存当前图像到临时文件
+        temp_path = "temp_extract.png"
+        self.img_label.zoomed_image.save(temp_path)
+        
+        # 提取内容
+        content = self.llm_extractor.extract_content(temp_path)
+        
+        # 删除临时文件
+        try:
+            os.remove(temp_path)
+        except:
+            pass
+            
+        # 显示结果
+        if content:
+            ExtractResultDialog(self.img_window, content)

@@ -4,7 +4,7 @@ Fastshot is a GenAI powered screenshot and annotation tool designed to optimize 
 
 With its "pin on top" feature, Fastshot allows users to keep screenshots easily accessible while enabling smooth zooming, moving, annotation, and copying for multi-system comparisons. The built-in OCR tool enables quick extraction of text from any part of the screen, further streamlining your workflow.
 
-Additionally, Fastshot’s GenAI-powered assistant offers advanced analysis and summarization of screen content, allowing users to extract information and ask questions with ease, significantly boosting productivity.
+Additionally, Fastshot's GenAI-powered assistant offers advanced analysis and summarization of screen content, allowing users to extract information and ask questions with ease, significantly boosting productivity.
 
 The tool also includes a Screen Pen feature, window pinning capabilities, and customizable window opacity adjustments—perfect for managing complex workflows across multiple windows and tasks.
 
@@ -52,6 +52,20 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 
 ### GenAI Assistant
 - **Multimodal AI Assistant**: Seamlessly integrated AI assistant that can read any content on your screen and answer your questions.
+
+### Content Extraction
+- **PowerExtract**: AI-powered content extraction from images
+- **LLM Settings**: Configurable LLM integration
+
+## Configuration
+### LLM Settings
+Configure your LLM settings in the PowerGenAI section:
+```ini
+[PowerGenAI]
+_base_url= "https://api.example.com/v1"
+key= "your-api-key"
+_model= "model-name"
+```
 
 ## Installation
 
