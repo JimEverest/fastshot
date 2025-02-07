@@ -52,18 +52,42 @@ class GenAIFrame(ttk.Frame):
             values=[
                 "google/gemini-2.0-pro-exp-02-05:free",
                 "gpt-4o",
-                # 可以添加更多模型选项
             ],
             width=37
         )
         self.model_combo.pack(side='left', padx=5, fill='x', expand=True)
+        
+        # 修改提示语配置部分，使用 Text 而不是 Entry
+        prompt_frame = ttk.LabelFrame(self, text="Extraction Prompt")
+        prompt_frame.pack(fill='x', padx=10, pady=5)
+        
+        # 创建文本框和滚动条
+        self.prompt_text = tk.Text(prompt_frame, wrap=tk.WORD, height=6, width=40)
+        prompt_scrollbar = ttk.Scrollbar(prompt_frame, orient=tk.VERTICAL, command=self.prompt_text.yview)
+        self.prompt_text.configure(yscrollcommand=prompt_scrollbar.set)
+        
+        # 插入默认或保存的提示语
+        default_prompt = (
+            "**Task:** Analyze and describe the provided image screenshot in a structured "
+            "Markdown format. The image may contain diagrams, charts, flows, system "
+            "screenshots, tables, PPT slides, or similar visual representations of "
+            "information. Your goal is to extract ALL relevant information and present "
+            "it in a clear, concise, and organized manner."
+        )
+        current_prompt = self.settings_manager.get_section('PowerGenAI').get('extraction_prompt', default_prompt)
+        self.prompt_text.insert('1.0', current_prompt)
+        
+        # 布局
+        self.prompt_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        prompt_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=5)
         
         # 添加说明标签
         help_text = (
             "Note:\n"
             "1. Base URL example: https://openrouter.ai/api/v1\n"
             "2. API Key format: sk-or-v1-xxxxxx\n"
-            "3. Select or input model name"
+            "3. Select or input model name\n"
+            "4. Customize extraction prompt to guide the AI's analysis"
         )
         help_label = ttk.Label(
             self, 
@@ -87,5 +111,6 @@ class GenAIFrame(ttk.Frame):
         return {
             '_base_url': self.base_url_var.get().strip(),
             'key': self.key_var.get().strip(),
-            '_model': self.model_var.get().strip()
+            '_model': self.model_var.get().strip(),
+            'extraction_prompt': self.prompt_text.get('1.0', tk.END).strip()  # 从 Text 组件获取内容
         } 

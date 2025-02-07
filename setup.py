@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='fastshot',
-    version='1.1.11',
+    version='1.1.12',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -19,7 +19,8 @@ setup(
         "customtkinter",
         "flask",
         "configparser",
-        "openai"
+        "openai",
+        "httpx>=0.24.0"
     ],
     package_data={
         'fastshot': [

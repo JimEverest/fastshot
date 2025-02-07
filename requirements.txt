@@ -12,4 +12,5 @@ customtkinter,
 flask,
 configparser,
 minio,
-openai>=1.0.0
+openai>=1.0.0,
+httpx>=0.24.0
