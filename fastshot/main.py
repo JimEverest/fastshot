@@ -24,6 +24,8 @@ import threading
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), 'web'))
 from fastshot.web.web_app import app as flask_app 
+from tkinter import filedialog
+from PIL import Image, UnidentifiedImageError
 
 print(f"flask_app: {flask_app}")
 print(f"flask_app type: {type(flask_app)}")
@@ -44,16 +46,72 @@ import time
 from fastshot.plugin_ocr import PluginOCR
 # from fastshot.plugin_ask import PluginAsk
 
+# --- New Class: VisibilityIndicator ---
+class VisibilityIndicator(tk.Toplevel):
+    """A small window to show the count of hidden image windows."""
+    def __init__(self, master, count):
+        super().__init__(master)
+        self.overrideredirect(True)  # No window decorations
+        self.attributes('-topmost', True) # Always on top
+        self.attributes('-alpha', 0.85) # Slightly transparent
+        # Make window non-interactive (click-through) - Windows specific
+        if os.name == 'nt':
+            self.after(10, self._set_click_through) # Delay needed for HWND
+
+        self.label = tk.Label(self, text=str(count), font=("Arial", 14, "bold"), bg="#333333", fg="white", padx=8, pady=4)
+        self.label.pack()
+
+        # Position in top-right corner of the primary monitor
+        self.update_idletasks() # Ensure window size is calculated
+        primary_monitor = get_monitors()[0]
+        window_width = self.winfo_width()
+        window_height = self.winfo_height()
+        # Position near top-right, with some padding
+        x_pos = primary_monitor.x + primary_monitor.width - window_width - 30
+        y_pos = primary_monitor.y + 30
+        self.geometry(f"+{x_pos}+{y_pos}")
+
+    def _set_click_through(self):
+        """Set WS_EX_TRANSPARENT style for click-through."""
+        try:
+            hwnd = self.winfo_id()
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
+            style = style | 0x80000 | 0x20 # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
+            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(0.85 * 255), 0x2) # LWA_ALPHA
+        except Exception as e:
+            print(f"Error setting click-through: {e}")
+
+    def update_count(self, count):
+        """Updates the displayed count."""
+        self.label.config(text=str(count))
+        # Recalculate position in case text size changes width
+        self.update_idletasks()
+        primary_monitor = get_monitors()[0]
+        window_width = self.winfo_width()
+        x_pos = primary_monitor.x + primary_monitor.width - window_width - 30
+        y_pos = primary_monitor.y + 30
+        self.geometry(f"+{x_pos}+{y_pos}")
+
+
+    def destroy(self):
+        """Destroys the indicator window."""
+        super().destroy()
+
 class SnipasteApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.app = self  # Set reference to self in root
         self.monitors = get_monitors()
-        self.snipping_tool = SnippingTool(self.root, self.monitors, self.on_screenshot)
+        self.snipping_tool = SnippingTool(self.root, self.monitors, self.create_image_window)
         self.windows = []
         self.plugins = {}
         
+        # Add state for visibility toggle
+        self.all_windows_hidden = False
+        self.visibility_indicator = None
+
         self.config = self.load_config()
         self.print_config_info()
         self.check_and_download_models()
@@ -75,7 +133,7 @@ class SnipasteApp:
             self.screen_pen = None
 
         # Start the Flask web app
-        self.start_flask_app()
+        # self.start_flask_app()
 
 
     def load_plugins(self):
@@ -148,7 +206,9 @@ class SnipasteApp:
                 'hotkey_screenpen_clear_hide': '<ctrl>+<esc>',
                 'hotkey_ask_dialog_key': 'ctrl',
                 'hotkey_ask_dialog_count': '4',
-                'hotkey_ask_dialog_time_window': '1.0'
+                'hotkey_ask_dialog_time_window': '1.0',
+                'hotkey_toggle_visibility': '<shift>+<f1>',
+                'hotkey_load_image': '<shift>+f'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -177,7 +237,9 @@ class SnipasteApp:
             'hotkey_screenpen_clear_hide': 'Clear pen and hide',
             'hotkey_ask_dialog_key': 'Ask Dialog key',
             'hotkey_ask_dialog_count': 'Ask Dialog press count',
-            'hotkey_ask_dialog_time_window': 'Ask Dialog time window'
+            'hotkey_ask_dialog_time_window': 'Ask Dialog time window',
+            'hotkey_toggle_visibility': 'Toggle All Image Windows Visibility',
+            'hotkey_load_image': 'Load Image'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -247,9 +309,53 @@ class SnipasteApp:
         self.listener_escape.start()
 
 
-    def on_screenshot(self, img):
+    def create_image_window(self, img):
+        """Creates a new floating ImageWindow from a PIL Image object."""
+        if not isinstance(img, Image.Image):
+            print("Error: create_image_window requires a PIL Image object.")
+            return
+
         window = ImageWindow(self, img, self.config)
+        # If windows are currently hidden, hide the new one immediately
+        if self.all_windows_hidden:
+            window.hide()
+            # Update indicator count
+            # Calculate count *after* potentially hiding the new window
+            hidden_count = sum(1 for w in self.windows if w.is_hidden and w.img_window.winfo_exists())
+            if window.is_hidden: # Add 1 if the new window was successfully hidden
+                 hidden_count += 1
+            self.show_visibility_indicator(hidden_count)
+
         self.windows.append(window)
+
+    def load_image_from_dialog(self):
+        """Opens a file dialog to load an image and creates an ImageWindow."""
+        file_path = filedialog.askopenfilename(
+            title="Open Image File",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"), ("All Files", "*.*")]
+        )
+
+        if not file_path:
+            print("No file selected.")
+            return
+
+        try:
+            print(f"Attempting to load image: {file_path}")
+            img = Image.open(file_path)
+            # Ensure image is in RGBA format for consistency with screenshots?
+            # img = img.convert("RGBA") # Optional: uncomment if needed
+            self.create_image_window(img) # Use the renamed method
+            print(f"Successfully loaded and displayed image: {file_path}")
+        except FileNotFoundError:
+            print(f"Error: File not found at {file_path}")
+            # Optionally show a user-friendly error message
+            # messagebox.showerror("Error", f"File not found:\n{file_path}")
+        except UnidentifiedImageError:
+            print(f"Error: Cannot identify image file. Is it a valid image format? Path: {file_path}")
+            # messagebox.showerror("Error", f"Cannot open image file:\n{file_path}\n\nPlease select a valid image.")
+        except Exception as e:
+            print(f"An unexpected error occurred while loading image: {e}")
+            # messagebox.showerror("Error", f"An error occurred:\n{e}")
 
     def exit_all_modes(self):
         for window in self.windows:
@@ -259,6 +365,64 @@ class SnipasteApp:
     def run(self):
         self.root.snipping_tool = self.snipping_tool
         self.root.mainloop()
+
+    # --- New Methods for Visibility Toggle ---
+    def toggle_all_image_windows_visibility(self):
+        """Toggles the visibility of all active ImageWindow instances."""
+        self.all_windows_hidden = not self.all_windows_hidden
+        hidden_count = 0
+
+        # Iterate over a copy in case the list is modified during iteration (e.g., by closing)
+        for window in list(self.windows):
+            if window.img_window.winfo_exists():
+                if self.all_windows_hidden:
+                    window.hide()
+                    hidden_count += 1
+                else:
+                    # Only show if it was previously hidden by this toggle
+                    if window.is_hidden:
+                        window.show()
+
+        # Update or remove the indicator
+        if self.all_windows_hidden and hidden_count > 0:
+            self.show_visibility_indicator(hidden_count)
+            print(f"Hid {hidden_count} windows.")
+        else:
+            # Ensure all windows are shown if toggle is off
+            if not self.all_windows_hidden:
+                 for window in list(self.windows):
+                     if window.img_window.winfo_exists() and window.is_hidden:
+                         window.show()
+            self.hide_visibility_indicator()
+            print("Showing all windows.")
+
+
+    def show_visibility_indicator(self, count):
+        """Creates or updates the visibility indicator."""
+        if self.visibility_indicator and self.visibility_indicator.winfo_exists():
+            self.visibility_indicator.update_count(count)
+        else:
+            # Ensure no old indicator exists before creating a new one
+            self.hide_visibility_indicator()
+            self.visibility_indicator = VisibilityIndicator(self.root, count)
+
+    def hide_visibility_indicator(self):
+        """Destroys the visibility indicator if it exists."""
+        if self.visibility_indicator and self.visibility_indicator.winfo_exists():
+            self.visibility_indicator.destroy()
+        self.visibility_indicator = None
+
+    def update_indicator_on_close(self):
+        """Called when an ImageWindow is closed to update the indicator if needed."""
+        if self.all_windows_hidden:
+            hidden_count = sum(1 for w in self.windows if w.is_hidden and w.img_window.winfo_exists())
+            if hidden_count > 0:
+                self.show_visibility_indicator(hidden_count)
+            else:
+                # If the last hidden window was closed, turn off the toggle state
+                self.all_windows_hidden = False
+                self.hide_visibility_indicator()
+    # --- End New Methods ---
 
 def main():
     app = SnipasteApp()

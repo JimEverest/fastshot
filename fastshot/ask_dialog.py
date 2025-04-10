@@ -39,7 +39,7 @@ class AskDialog:
 
         # Disable interactions with the image window while the dialog is open
         if self.image_window:
-            self.image_window.disable_interactions()
+            # self.image_window.disable_interactions()
             self.image_window.is_dialog_open = True
 
         # Load user and AI icons
@@ -402,7 +402,7 @@ class AskDialog:
             # Create dialog icon only if image_window is present
             self.create_dialog_icon()
             # Re-enable interactions with the image window
-            self.image_window.enable_interactions()
+            # self.image_window.enable_interactions()
             self.image_window.is_dialog_open = False
 
     def maximize_dialog(self, event=None):
@@ -414,7 +414,7 @@ class AskDialog:
             self.dialog_icon = None
         if self.image_window:
             # Disable interactions with the image window
-            self.image_window.disable_interactions()
+            # self.image_window.disable_interactions()
             self.image_window.is_dialog_open = True
 
     def create_dialog_icon(self):

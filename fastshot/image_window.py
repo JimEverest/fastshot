@@ -5,11 +5,138 @@ import io
 import win32clipboard
 from pynput import keyboard
 import os
+import ctypes # Import ctypes if not already present
+import time # Add time import
 
 from .paint_tool import PaintTool
 from .text_tool import TextTool
 from .ask_dialog import AskDialog  # 导入 AskDialog 类
 from .utils.llm_utils import LLMExtractor, ExtractResultDialog
+
+# --- New Class: ZoomIndicator ---
+class ZoomIndicator(tk.Toplevel):
+    """A temporary, semi-transparent indicator for zoom percentage with fade-out."""
+    def __init__(self, parent_window, scale):
+        super().__init__(parent_window)
+        self.parent_window = parent_window
+        self.overrideredirect(True)
+        self.attributes('-topmost', True)
+
+        self.initial_alpha = 0.75
+        self.current_alpha = self.initial_alpha
+        self.attributes('-alpha', self.current_alpha)
+
+        # Make window non-interactive (click-through) - Windows specific
+        # This WS_EX_TRANSPARENT style makes the window ignore mouse events (clicks, scroll),
+        # passing them to the window underneath (the ImageWindow).
+        if os.name == 'nt':
+            self.after(10, self._set_click_through) # Delay needed for HWND
+
+        self.label = tk.Label(self, font=("Arial", 16, "bold"), bg="#222222", fg="white", padx=10, pady=5)
+        self.label.pack()
+
+        self.update_scale(scale) # Initial text and position
+
+        # --- Fade Out Logic ---
+        self.fade_duration = 1000  # milliseconds (2 seconds)
+        self.fade_steps = 40       # Number of steps for the fade
+        self.fade_interval = self.fade_duration // self.fade_steps # ms per step
+        self.fade_start_time = time.time()
+        self.fade_job = None
+        self.start_fade_out()
+        # --- End Fade Out Logic ---
+
+    def _set_click_through(self):
+        """Set WS_EX_TRANSPARENT style for click-through."""
+        try:
+            hwnd = self.winfo_id()
+            # Get current extended window style
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
+            # Add WS_EX_LAYERED and WS_EX_TRANSPARENT styles
+            style = style | 0x80000 | 0x20 # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            # Set the new extended window style
+            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
+            # Set initial layered window attributes (needed for alpha)
+            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(self.current_alpha * 255), 0x2) # LWA_ALPHA
+        except Exception as e:
+            print(f"Error setting click-through for ZoomIndicator: {e}")
+
+    def update_scale(self, scale):
+        """Updates the displayed scale and repositions the indicator."""
+        percentage = max(1, int(scale * 100)) # Ensure at least 1%
+        self.label.config(text=f"{percentage}%")
+
+        # Recalculate position to center on parent window
+        self.update_idletasks() # Ensure indicator size is calculated
+        # Check if parent window still exists before getting geometry
+        if not self.parent_window.winfo_exists():
+             self.destroy() # Destroy indicator if parent is gone
+             return
+
+        parent_x = self.parent_window.winfo_x()
+        parent_y = self.parent_window.winfo_y()
+        parent_width = self.parent_window.winfo_width()
+        parent_height = self.parent_window.winfo_height()
+        indicator_width = self.winfo_width()
+        indicator_height = self.winfo_height()
+
+        # x_pos = parent_x + (parent_width // 2) - (indicator_width // 2)
+        # y_pos = parent_y + (parent_height // 2) - (indicator_height // 2)
+        x_pos = parent_x +parent_width
+        y_pos = parent_y 
+        self.geometry(f"+{x_pos}+{y_pos}")
+
+    def start_fade_out(self):
+        """Initiates the fade-out process."""
+        if self.fade_job:
+            self.after_cancel(self.fade_job) # Cancel previous fade if any
+
+        self.fade_start_time = time.time()
+        self.current_alpha = self.initial_alpha # Reset alpha
+        self.attributes('-alpha', self.current_alpha)
+        self._fade_step() # Start the recursive fade steps
+
+    def _fade_step(self):
+        """Performs a single step of the fade-out animation."""
+        elapsed_time = (time.time() - self.fade_start_time) * 1000 # milliseconds
+        progress = min(elapsed_time / self.fade_duration, 1.0) # Ensure progress doesn't exceed 1
+
+        self.current_alpha = self.initial_alpha * (1.0 - progress)
+
+        try:
+            # Update window alpha
+            if self.winfo_exists():
+                 self.attributes('-alpha', max(0.0, self.current_alpha)) # Ensure alpha doesn't go below 0
+            else:
+                 return # Stop if window destroyed
+
+            if progress < 1.0:
+                # Schedule the next step
+                self.fade_job = self.after(self.fade_interval, self._fade_step)
+            else:
+                # Fade complete, destroy the window
+                self.destroy()
+        except tk.TclError as e:
+             # Handle cases where the window might be destroyed unexpectedly
+             print(f"TclError during fade step (window likely destroyed): {e}")
+             self.destroy()
+
+    def reset_fade_timer(self):
+        """Resets the fade-out timer when zoom happens again."""
+        # No need to cancel here, start_fade_out handles it
+        self.start_fade_out()
+
+    def destroy(self):
+        """Destroys the indicator window and cancels any pending fade job."""
+        if self.fade_job:
+            self.after_cancel(self.fade_job)
+            self.fade_job = None
+        # Clear the reference in the parent ImageWindow
+        if hasattr(self.parent_window, 'zoom_indicator_ref') and self.parent_window.zoom_indicator_ref == self:
+             self.parent_window.zoom_indicator_ref = None
+        # Check if window exists before destroying
+        if self.winfo_exists():
+            super().destroy()
 
 class ImageWindow:
     def __init__(self, app, img, config):
@@ -35,6 +162,8 @@ class ImageWindow:
         self.ask_dialog = None  # 添加 AskDialog 的实例变量
         self.is_dialog_open = False  # 用于禁用截图交互
         self.llm_extractor = LLMExtractor()
+        self.is_hidden = False # Track visibility state
+        self.zoom_indicator_ref = None # Reference to the zoom indicator
 
         self.setup_hotkey_listener()
 
@@ -141,10 +270,22 @@ class ImageWindow:
         self.context_menu.add_command(label="⚙️ LLM Settings", command=self.show_llm_settings)
 
     def close(self):
+        # Ensure zoom indicator is destroyed if the window is closed
+        if self.zoom_indicator_ref and self.zoom_indicator_ref.winfo_exists():
+            self.zoom_indicator_ref.destroy()
+            self.zoom_indicator_ref = None
+
         if self.ask_dialog and self.ask_dialog.dialog_window and self.ask_dialog.dialog_window.winfo_exists():
             self.ask_dialog.clean_and_close()
+        # Destroy the window first
+        was_hidden = self.is_hidden
         self.img_window.destroy()
-        self.app.windows.remove(self)
+        # Remove from the app's list
+        if self in self.app.windows:
+            self.app.windows.remove(self)
+        # Update indicator if windows are hidden and this window was part of the count
+        if self.app.all_windows_hidden and was_hidden:
+             self.app.update_indicator_on_close()
 
     def save_as(self):
         file_path = filedialog.asksaveasfilename(
@@ -175,17 +316,17 @@ class ImageWindow:
             self.ask_dialog = AskDialog(self)
             self.is_dialog_open = True
 
-    def disable_interactions(self):
-        # 禁用截图的移动和缩放功能
-        self.img_window.unbind('<ButtonPress-1>')
-        self.img_window.unbind('<B1-Motion>')
-        self.img_window.unbind('<MouseWheel>')
+    # def disable_interactions(self):
+    #     # 禁用截图的移动和缩放功能
+    #     self.img_window.unbind('<ButtonPress-1>')
+    #     self.img_window.unbind('<B1-Motion>')
+    #     self.img_window.unbind('<MouseWheel>')
 
-    def enable_interactions(self):
-        # 恢复截图的移动和缩放功能
-        self.img_window.bind('<ButtonPress-1>', self.start_move)
-        self.img_window.bind('<B1-Motion>', self.do_move)
-        self.img_window.bind('<MouseWheel>', self.zoom)
+    # def enable_interactions(self):
+    #     # 恢复截图的移动和缩放功能
+    #     self.img_window.bind('<ButtonPress-1>', self.start_move)
+    #     self.img_window.bind('<B1-Motion>', self.do_move)
+    #     self.img_window.bind('<MouseWheel>', self.zoom)
 
     def copy(self):
         output = io.BytesIO()
@@ -212,11 +353,52 @@ class ImageWindow:
     def zoom(self, event):
         if not self.is_dialog_open:
             scale_factor = 1.1 if event.delta > 0 else 0.9
-            self.img_label.scale *= scale_factor
+
+            last_scale = self.img_label.scale
+            new_scale = last_scale * scale_factor
+            # Clamp scale between reasonable limits (e.g., 10% to 1000%)
+            new_scale = max(0.05, min(new_scale, 10.0))
+
+            # # Only update if scale actually changes significantly
+            # if abs(new_scale - last_scale) < 0.01 and new_scale != 0.1 and new_scale != 10.0:
+            #      return # Avoid tiny changes causing updates
+
+            if new_scale >= 0.8:
+                self.img_label.scale = round(new_scale, 1)
+            else:
+                self.img_label.scale = new_scale
+
+            print("self.img_label.scale:  ", self.img_label.scale)
             new_width = int(self.img_label.original_image.width * self.img_label.scale)
             new_height = int(self.img_label.original_image.height * self.img_label.scale)
-            self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
-            self.redraw_image()
+
+            # Check for excessively large dimensions to prevent memory errors
+            max_dimension = 16000 # Example limit, adjust as needed
+            if new_width > max_dimension or new_height > max_dimension:
+                print(f"Zoom limit reached to prevent excessive size ({new_width}x{new_height}).")
+                self.img_label.scale = last_scale # Revert scale
+                return
+
+            try:
+                self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
+                self.redraw_image() # This will update the label's image
+
+                # --- Zoom Indicator Logic ---
+                if self.zoom_indicator_ref and self.zoom_indicator_ref.winfo_exists():
+                    # Update existing indicator and reset timer
+                    self.zoom_indicator_ref.update_scale(self.img_label.scale)
+                    self.zoom_indicator_ref.reset_fade_timer()
+                else:
+                    # Create new indicator
+                    self.zoom_indicator_ref = ZoomIndicator(self.img_window, self.img_label.scale)
+                # --- End Zoom Indicator Logic ---
+
+            except MemoryError:
+                print("MemoryError during image resize. Reverting scale.")
+                self.img_label.scale = last_scale # Revert scale on error
+            except Exception as e:
+                print(f"Error during zoom resize: {e}")
+                self.img_label.scale = last_scale # Revert scale on other errors
 
     def redraw_image(self):
         self.img_label.zoomed_image = self.img_label.original_image.resize(
@@ -267,3 +449,17 @@ class ImageWindow:
         # 显示结果
         if content:
             ExtractResultDialog(self.img_window, content)
+
+    def hide(self):
+        """Hides the image window."""
+        if self.img_window.winfo_exists() and not self.is_hidden:
+            self.img_window.withdraw()
+            self.is_hidden = True
+            print(f"Hiding window: {self.img_window.winfo_id()}")
+
+    def show(self):
+        """Shows the image window."""
+        if self.img_window.winfo_exists() and self.is_hidden:
+            self.img_window.deiconify()
+            self.is_hidden = False
+            print(f"Showing window: {self.img_window.winfo_id()}")

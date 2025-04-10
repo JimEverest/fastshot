@@ -145,6 +145,14 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_snip', '<shift>+a+s')),
             self.on_activate_snip
         )
+        self.hotkey_toggle_visibility = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_toggle_visibility', '<shift>+<f1>')),
+            self.on_toggle_visibility
+        )
+        self.hotkey_load_image = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_load_image', '<shift>+f')),
+            self.on_activate_load_image
+        )
 
         # Load the 4-times Ctrl hotkey settings
         self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
@@ -189,6 +197,8 @@ class HotkeyListener:
         self.hotkey_opacity_down.press(self.listener.canonical(key))
         self.hotkey_opacity_up.press(self.listener.canonical(key))
         self.hotkey_snip.press(self.listener.canonical(key))
+        self.hotkey_toggle_visibility.press(self.listener.canonical(key))
+        self.hotkey_load_image.press(self.listener.canonical(key)) # Handle press
 
         # Handle Ctrl key presses
         # ---------------------------------------
@@ -206,6 +216,8 @@ class HotkeyListener:
         self.hotkey_opacity_down.release(self.listener.canonical(key))
         self.hotkey_opacity_up.release(self.listener.canonical(key))
         self.hotkey_snip.release(self.listener.canonical(key))
+        self.hotkey_toggle_visibility.release(self.listener.canonical(key))
+        self.hotkey_load_image.release(self.listener.canonical(key)) # Handle release
 
         # Handle Ctrl key releases
         if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
@@ -290,6 +302,20 @@ class HotkeyListener:
     def on_activate_snip(self):
         print("Snipping hotkey activated")
         self.root.after(0, lambda: self.root.snipping_tool.start_snipping())
+
+    # --- New Method ---
+    def on_toggle_visibility(self):
+        """Callback for the toggle visibility hotkey."""
+        print("Toggle visibility hotkey activated")
+        # Use root.after to ensure the call happens in the main Tkinter thread
+        self.root.after(0, self.app.toggle_all_image_windows_visibility)
+
+    def on_activate_load_image(self):
+        """Callback for the load image hotkey."""
+        print("Load image hotkey activated")
+        # Use root.after to ensure the call happens in the main Tkinter thread
+        # and interacts correctly with the file dialog.
+        self.root.after(0, self.app.load_image_from_dialog)
 
 # 从配置文件加载热键
 def load_config():
