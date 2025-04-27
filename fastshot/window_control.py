@@ -2,11 +2,12 @@
 
 import ctypes
 from ctypes import wintypes
-from pynput import keyboard
+from pynput import keyboard, mouse
 import win32gui
 import win32con
 import win32process
 import time
+import math
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -15,6 +16,10 @@ kernel32 = ctypes.windll.kernel32
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x80000
 LWA_ALPHA = 0x2
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_SHOWWINDOW = 0x0040
 
 # Global variable for window opacity
 current_window_opacity = 1.0  # Default opacity
@@ -87,6 +92,59 @@ def toggle_always_on_top():
     except Exception as e:
         print(f"Exception while toggling always-on-top: {e}")
 
+def resize_foreground_window(zoom_in):
+    """Resizes the foreground window, keeping it centered."""
+    hwnd = get_foreground_window()
+    if not hwnd:
+        print("Resize: No valid foreground window found.")
+        return
+
+    try:
+        # Get current window position and size
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            print(f"Resize: Failed to get window rect for HWND {hwnd}")
+            return
+
+        current_x = rect.left
+        current_y = rect.top
+        current_width = rect.right - rect.left
+        current_height = rect.bottom - rect.top
+
+        if current_width <= 0 or current_height <= 0:
+             print(f"Resize: Invalid window dimensions ({current_width}x{current_height}).")
+             return
+
+        # Define zoom factor
+        zoom_factor = 1.1 if zoom_in else 1 / 1.1
+
+        # Calculate new dimensions
+        new_width = int(math.ceil(current_width * zoom_factor))
+        new_height = int(math.ceil(current_height * zoom_factor))
+
+        # Prevent window from becoming too small
+        min_size = 50 # Minimum width/height in pixels
+        if new_width < min_size or new_height < min_size:
+            print(f"Resize: Minimum size ({min_size}px) reached.")
+            return
+
+        # Calculate position adjustment to keep window centered
+        delta_width = new_width - current_width
+        delta_height = new_height - current_height
+        new_x = current_x - delta_width // 2
+        new_y = current_y - delta_height // 2
+
+        # Use MoveWindow to resize and reposition
+        # BOOL MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint);
+        if user32.MoveWindow(hwnd, new_x, new_y, new_width, new_height, True):
+             # print(f"Resized window {hwnd} to {new_width}x{new_height} at ({new_x},{new_y})")
+             pass
+        else:
+             print(f"Resize: MoveWindow failed for HWND {hwnd}. Error: {kernel32.GetLastError()}")
+
+    except Exception as e:
+        print(f"Exception during window resize: {e}")
+
 class HotkeyListener:
     def __init__(self, config, root, app):
         self.plugin_shortcuts = {}
@@ -97,8 +155,13 @@ class HotkeyListener:
         self.app = app  # Reference to main application
         self.load_hotkeys()
         self.listener = None
+        self.mouse_listener = None
         self.ctrl_press_count = 0
         self.ctrl_last_release_time = 0.0
+        self.modifiers = {
+            keyboard.Key.ctrl_l: False, keyboard.Key.ctrl_r: False,
+            keyboard.Key.shift_l: False, keyboard.Key.shift_r: False,
+        }
 
     def register_plugin_hotkeys(self):
         for plugin_id, plugin_data in self.app.plugins.items():
@@ -150,7 +213,7 @@ class HotkeyListener:
             self.on_toggle_visibility
         )
         self.hotkey_load_image = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_load_image', '<shift>+f')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_load_image', '<shift>+<f2>')),
             self.on_activate_load_image
         )
 
@@ -160,13 +223,28 @@ class HotkeyListener:
         self.ask_dialog_time_window = float(shortcuts.get('hotkey_ask_dialog_time_window', '1.0'))
 
     def start(self):
-        print("Starting HotkeyListener") 
+        print("Starting HotkeyListener (Keyboard & Mouse)")
         self.listener = keyboard.Listener(
             on_press=self.on_press,
             on_release=self.on_release)
-        self.register_plugin_hotkeys()  # Add this line
+        self.register_plugin_hotkeys()
         self.listener.start()
 
+        self.mouse_listener = mouse.Listener(
+            on_scroll=self.on_scroll
+        )
+        self.mouse_listener.start()
+
+    def stop(self):
+        """Stops both keyboard and mouse listeners."""
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
+            print("Stopped Keyboard Listener")
+        if self.mouse_listener:
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+            print("Stopped Mouse Listener")
 
     def get_key_char(self, key):
         if isinstance(key, keyboard.Key):
@@ -189,60 +267,48 @@ class HotkeyListener:
                 return str(key).lower().replace('key.', '')
 
     def on_press(self, key):
-        # print(f"Key pressed: {key}")
-        # Existing code...
-        # ---------------------------------------
+        if key in self.modifiers:
+            self.modifiers[key] = True
+
         self.hotkey_topmost_on.press(self.listener.canonical(key))
         self.hotkey_topmost_off.press(self.listener.canonical(key))
         self.hotkey_opacity_down.press(self.listener.canonical(key))
         self.hotkey_opacity_up.press(self.listener.canonical(key))
         self.hotkey_snip.press(self.listener.canonical(key))
         self.hotkey_toggle_visibility.press(self.listener.canonical(key))
-        self.hotkey_load_image.press(self.listener.canonical(key)) # Handle press
+        self.hotkey_load_image.press(self.listener.canonical(key))
 
-        # Handle Ctrl key presses
-        # ---------------------------------------
-        if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-            pass  # Do nothing on press
-        else:
-            # Any other key resets the count
-            self.ctrl_press_count = 0
- 
+        if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
+            if self.ctrl_press_count < self.ask_dialog_press_count:
+                self.ctrl_press_count = 0
 
     def on_release(self, key):
-        # print(f"Key released: {key}") 
+        if key in self.modifiers:
+            self.modifiers[key] = False
+
         self.hotkey_topmost_on.release(self.listener.canonical(key))
         self.hotkey_topmost_off.release(self.listener.canonical(key))
         self.hotkey_opacity_down.release(self.listener.canonical(key))
         self.hotkey_opacity_up.release(self.listener.canonical(key))
         self.hotkey_snip.release(self.listener.canonical(key))
         self.hotkey_toggle_visibility.release(self.listener.canonical(key))
-        self.hotkey_load_image.release(self.listener.canonical(key)) # Handle release
+        self.hotkey_load_image.release(self.listener.canonical(key))
 
-        # Handle Ctrl key releases
-        if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
+        if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
             if current_time - self.ctrl_last_release_time > self.ask_dialog_time_window:
-                # Too much time has passed; reset counter
                 self.ctrl_press_count = 0
             self.ctrl_press_count += 1
             self.ctrl_last_release_time = current_time
 
             if self.ctrl_press_count >= self.ask_dialog_press_count:
-                # Check if all releases are within the time window
                 if current_time - (self.ctrl_last_release_time - self.ask_dialog_time_window) <= self.ask_dialog_time_window:
-                    # Reset counter
                     self.ctrl_press_count = 0
-                    # Open AskDialog
                     self.root.after(0, self.app.open_global_ask_dialog)
         else:
-            # Any other key resets the count
             self.ctrl_press_count = 0
 
-        # ---------------------------------------
-        # Handle plugin hotkeys
         key_char = self.get_key_char(key)
-        # print(f"Key pressed: {key_char}")  # Debug statement
         if key_char in self.plugin_shortcuts:
             current_time = time.time()
             last_press_time = self.plugin_last_press_times.get(key_char, 0)
@@ -258,6 +324,15 @@ class HotkeyListener:
                 self.activate_plugin(plugin_id)
                 self.plugin_key_counts[key_char] = 0
 
+    def on_scroll(self, x, y, dx, dy):
+        ctrl_pressed = self.modifiers[keyboard.Key.ctrl_l] or self.modifiers[keyboard.Key.ctrl_r]
+        shift_pressed = self.modifiers[keyboard.Key.shift_l] or self.modifiers[keyboard.Key.shift_r]
+
+        if ctrl_pressed and shift_pressed:
+            if dy != 0:
+                zoom_in = dy > 0
+                resize_foreground_window(zoom_in)
+
     def activate_plugin(self, plugin_id):
         plugin_data = self.app.plugins.get(plugin_id)
         if plugin_data:
@@ -267,7 +342,6 @@ class HotkeyListener:
                 print(f"Activated plugin: {plugin_data['info']['name']}")
             except Exception as e:
                 print(f"Error activating plugin {plugin_id}: {e}")
-
 
     def toggle_topmost_on(self):
         toggle_always_on_top()
@@ -303,18 +377,12 @@ class HotkeyListener:
         print("Snipping hotkey activated")
         self.root.after(0, lambda: self.root.snipping_tool.start_snipping())
 
-    # --- New Method ---
     def on_toggle_visibility(self):
-        """Callback for the toggle visibility hotkey."""
         print("Toggle visibility hotkey activated")
-        # Use root.after to ensure the call happens in the main Tkinter thread
         self.root.after(0, self.app.toggle_all_image_windows_visibility)
 
     def on_activate_load_image(self):
-        """Callback for the load image hotkey."""
         print("Load image hotkey activated")
-        # Use root.after to ensure the call happens in the main Tkinter thread
-        # and interacts correctly with the file dialog.
         self.root.after(0, self.app.load_image_from_dialog)
 
 # 从配置文件加载热键
