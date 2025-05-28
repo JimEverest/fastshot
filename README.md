@@ -128,10 +128,13 @@ hotkey_topmost_off = <cmd>+<shift>+\
 hotkey_opacity_down = <left>+<right>+<down>
 hotkey_opacity_up = <left>+<right>+<up>
 
-[ScreenPen]
-enable_screenpen = True
-pen_color = red
-pen_width = 3
+hotkey_ask_dialog_key = <ctrl>
+hotkey_ask_dialog_count = 4
+hotkey_ask_dialog_time_window = 1.0
+
+hotkey_toggle_visibility = <shift>+<f1>     # Toggle visibility of all image windows
+hotkey_load_image = <shift>+<f2>            # Load image from file
+hotkey_reposition_windows = <shift>+<f3>    # Reposition all image windows to origin
 ```
 
 

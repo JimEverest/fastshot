@@ -22,13 +22,13 @@ import shutil
 import threading
 # Import your Flask app
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), 'web'))
-from fastshot.web.web_app import app as flask_app 
+# sys.path.append(os.path.join(os.path.dirname(__file__), 'web'))
+# from fastshot.web.web_app import app as flask_app 
 from tkinter import filedialog
 from PIL import Image, UnidentifiedImageError
 
-print(f"flask_app: {flask_app}")
-print(f"flask_app type: {type(flask_app)}")
+# print(f"flask_app: {flask_app}")
+# print(f"flask_app type: {type(flask_app)}")
 
 from fastshot.snipping_tool import SnippingTool
 from fastshot.image_window import ImageWindow
@@ -163,15 +163,15 @@ class SnipasteApp:
 
 
                     
-    def start_flask_app(self):
-        def run_flask():
-            try:
-                flask_app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
-            except Exception as e:
-                print(f"Failed to start Flask app: {e}")
+    # def start_flask_app(self):
+    #     def run_flask():
+    #         try:
+    #             flask_app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+    #         except Exception as e:
+    #             print(f"Failed to start Flask app: {e}")
 
-        threading.Thread(target=run_flask, daemon=True).start()
-        print("Flask web app started on http://127.0.0.1:5000")
+    #     threading.Thread(target=run_flask, daemon=True).start()
+    #     print("Flask web app started on http://127.0.0.1:5000")
 
     def open_global_ask_dialog(self):
         if self.ask_dialog:
@@ -208,7 +208,8 @@ class SnipasteApp:
                 'hotkey_ask_dialog_count': '4',
                 'hotkey_ask_dialog_time_window': '1.0',
                 'hotkey_toggle_visibility': '<shift>+<f1>',
-                'hotkey_load_image': '<shift>+f'
+                'hotkey_load_image': '<shift>+<f2>',
+                'hotkey_reposition_windows': '<shift>+<f3>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -239,7 +240,8 @@ class SnipasteApp:
             'hotkey_ask_dialog_count': 'Ask Dialog press count',
             'hotkey_ask_dialog_time_window': 'Ask Dialog time window',
             'hotkey_toggle_visibility': 'Toggle All Image Windows Visibility',
-            'hotkey_load_image': 'Load Image'
+            'hotkey_load_image': 'Load Image from File',
+            'hotkey_reposition_windows': 'Reposition All Image Windows to Origin'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -423,6 +425,79 @@ class SnipasteApp:
                 self.all_windows_hidden = False
                 self.hide_visibility_indicator()
     # --- End New Methods ---
+
+    def reposition_all_image_windows(self):
+        """Repositions all active ImageWindow instances to the primary monitor's origin."""
+        try:
+            # Get primary monitor info
+            monitors = get_monitors()
+            primary_monitor = None
+            for monitor in monitors:
+                if monitor.is_primary:
+                    primary_monitor = monitor
+                    break
+            
+            # Fallback to first monitor if no primary found
+            if not primary_monitor and monitors:
+                primary_monitor = monitors[0]
+            
+            if not primary_monitor:
+                print("No monitors found for repositioning.")
+                return
+
+            # Start position at primary monitor's origin
+            start_x = primary_monitor.x
+            start_y = primary_monitor.y
+            offset_step = 30  # Pixels to offset each window to avoid complete overlap
+
+            repositioned_count = 0
+            active_windows = []
+
+            # Get all active (existing) image windows
+            for window in self.windows:
+                if window.img_window.winfo_exists() and not window.is_hidden:
+                    active_windows.append(window)
+
+            if not active_windows:
+                print("No active image windows to reposition.")
+                return
+
+            # Reposition each window with a small offset
+            for i, window in enumerate(active_windows):
+                try:
+                    new_x = start_x + (i * offset_step)
+                    new_y = start_y + (i * offset_step)
+                    
+                    # Ensure the window doesn't go outside the primary monitor bounds
+                    # Get window dimensions first
+                    window.img_window.update_idletasks()  # Ensure geometry is current
+                    window_width = window.img_window.winfo_width()
+                    window_height = window.img_window.winfo_height()
+                    
+                    # Check boundaries and adjust if necessary
+                    max_x = primary_monitor.x + primary_monitor.width - window_width
+                    max_y = primary_monitor.y + primary_monitor.height - window_height
+                    
+                    if new_x > max_x:
+                        new_x = primary_monitor.x  # Wrap back to left edge
+                        new_y += offset_step * 2  # Move down more to avoid overlap
+                    
+                    if new_y > max_y:
+                        new_y = primary_monitor.y  # Wrap back to top
+                    
+                    # Move the window
+                    window.img_window.geometry(f"+{new_x}+{new_y}")
+                    repositioned_count += 1
+                    print(f"Repositioned window {i+1} to ({new_x}, {new_y})")
+                    
+                except Exception as e:
+                    print(f"Error repositioning window {i+1}: {e}")
+                    continue
+
+            print(f"Successfully repositioned {repositioned_count} image windows to primary monitor origin.")
+
+        except Exception as e:
+            print(f"Error during reposition operation: {e}")
 
 def main():
     app = SnipasteApp()

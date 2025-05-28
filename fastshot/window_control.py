@@ -216,6 +216,11 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_load_image', '<shift>+<f2>')),
             self.on_activate_load_image
         )
+        # Add the new hotkey for repositioning image windows
+        self.hotkey_reposition_windows = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_reposition_windows', '<shift>+<f3>')),
+            self.on_reposition_windows
+        )
 
         # Load the 4-times Ctrl hotkey settings
         self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
@@ -277,6 +282,7 @@ class HotkeyListener:
         self.hotkey_snip.press(self.listener.canonical(key))
         self.hotkey_toggle_visibility.press(self.listener.canonical(key))
         self.hotkey_load_image.press(self.listener.canonical(key))
+        self.hotkey_reposition_windows.press(self.listener.canonical(key))
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             if self.ctrl_press_count < self.ask_dialog_press_count:
@@ -293,6 +299,7 @@ class HotkeyListener:
         self.hotkey_snip.release(self.listener.canonical(key))
         self.hotkey_toggle_visibility.release(self.listener.canonical(key))
         self.hotkey_load_image.release(self.listener.canonical(key))
+        self.hotkey_reposition_windows.release(self.listener.canonical(key))
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
@@ -384,6 +391,11 @@ class HotkeyListener:
     def on_activate_load_image(self):
         print("Load image hotkey activated")
         self.root.after(0, self.app.load_image_from_dialog)
+
+    def on_reposition_windows(self):
+        """Callback for the reposition windows hotkey."""
+        print("Reposition windows hotkey activated")
+        self.root.after(0, self.app.reposition_all_image_windows)
 
 # 从配置文件加载热键
 def load_config():
