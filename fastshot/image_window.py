@@ -243,10 +243,12 @@ class ImageWindow:
             "Paint": "🎨",
             "Undo": "↺",
             "Exit Edit": "🚪",
-            "Text": "��",
+            "Text": "📝",
+            "Rotate Left": "↶",        # 新增：逆时针旋转图标
+            "Rotate Right": "↷",       # 新增：顺时针旋转图标
             "OCR": "🧾",
             "Ask": "💬",
-            "PowerExtract": "🔍"  # 新增图标
+            "PowerExtract": "🔍"
         }
 
         commands = {
@@ -257,9 +259,11 @@ class ImageWindow:
             "Undo": self.undo,
             "Exit Edit": self.exit_edit_mode,
             "Text": self.text,
+            "Rotate Left": self.rotate_left,    # 新增：逆时针旋转命令
+            "Rotate Right": self.rotate_right,  # 新增：顺时针旋转命令
             "OCR": self.ocr,
             "Ask": self.open_ask_dialog,
-            "PowerExtract": self.power_extract  # 新增命令
+            "PowerExtract": self.power_extract
         }
 
         for label, icon in icons.items():
@@ -463,3 +467,37 @@ class ImageWindow:
             self.img_window.deiconify()
             self.is_hidden = False
             print(f"Showing window: {self.img_window.winfo_id()}")
+
+    def rotate_left(self):
+        """逆时针旋转90度"""
+        if self.img_label.original_image:
+            # 旋转原始图像
+            self.img_label.original_image = self.img_label.original_image.rotate(90, expand=True)
+            
+            # 重新计算缩放后的图像
+            new_width = int(self.img_label.original_image.width * self.img_label.scale)
+            new_height = int(self.img_label.original_image.height * self.img_label.scale)
+            
+            try:
+                self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
+                self.redraw_image()
+                print("Image rotated 90° counter-clockwise")
+            except Exception as e:
+                print(f"Error during rotation: {e}")
+
+    def rotate_right(self):
+        """顺时针旋转90度"""
+        if self.img_label.original_image:
+            # 旋转原始图像
+            self.img_label.original_image = self.img_label.original_image.rotate(-90, expand=True)
+            
+            # 重新计算缩放后的图像
+            new_width = int(self.img_label.original_image.width * self.img_label.scale)
+            new_height = int(self.img_label.original_image.height * self.img_label.scale)
+            
+            try:
+                self.img_label.zoomed_image = self.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
+                self.redraw_image()
+                print("Image rotated 90° clockwise")
+            except Exception as e:
+                print(f"Error during rotation: {e}")
