@@ -57,6 +57,13 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 - **PowerExtract**: AI-powered content extraction from images
 - **LLM Settings**: Configurable LLM integration
 
+### Session Management & Cloud Sync
+- **Session Save/Load**: Save and restore all floating image windows with metadata
+- **Enhanced Metadata**: Add descriptions, tags, colors, and classifications to sessions
+- **Cloud Storage**: AWS S3 integration with encryption and proxy support
+- **File Manager**: Comprehensive session manager with filtering, sorting, and pagination
+- **Cross-Platform Sync**: Synchronize sessions between different devices
+
 ## Configuration
 ### LLM Settings
 Configure your LLM settings in the PowerGenAI section:
@@ -66,6 +73,22 @@ _base_url= "https://api.example.com/v1"
 key= "your-api-key"
 _model= "model-name"
 ```
+
+### Cloud Sync Settings
+Configure AWS S3 cloud synchronization in the CloudSync section:
+```ini
+[CloudSync]
+cloud_sync_enabled = true
+aws_access_key = your-aws-access-key
+aws_secret_key = your-aws-secret-key
+aws_region = us-east-1
+s3_bucket_name = your-bucket-name
+encryption_key = your-encryption-key
+proxy_enabled = false
+proxy_url = http://username:password@proxy.com:8080
+```
+
+**Note**: All session data is encrypted before upload to S3 using the encryption key you provide. The data is also disguised within image files for additional security.
 
 ## Installation
 
@@ -137,6 +160,7 @@ hotkey_load_image = <shift>+<f2>            # Load image from file
 hotkey_reposition_windows = <shift>+<f3>    # Reposition all image windows to origin
 hotkey_save_session = <shift>+<f4>          # Save current session to file
 hotkey_load_session = <shift>+<f5>          # Load session from file
+hotkey_session_manager = <shift>+<f6>       # Open session manager UI
 ```
 
 

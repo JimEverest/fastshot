@@ -36,6 +36,7 @@ from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
 from fastshot.ask_dialog import AskDialog
 from fastshot.session_manager import SessionManager  # 导入 SessionManager
+from fastshot.cloud_sync import CloudSyncManager  # 导入 CloudSyncManager
 
 
 import importlib
@@ -112,7 +113,7 @@ class SnipasteApp:
         # Add state for visibility toggle
         self.all_windows_hidden = False
         self.visibility_indicator = None
-
+        
         self.config = self.load_config()
         self.print_config_info()
         self.check_and_download_models()
@@ -127,6 +128,9 @@ class SnipasteApp:
 
         # Initialize session manager
         self.session_manager = SessionManager(self)
+        
+        # Initialize cloud sync manager
+        self.cloud_sync = CloudSyncManager(self)
 
         # Initialize ScreenPen
         enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)
@@ -215,7 +219,8 @@ class SnipasteApp:
                 'hotkey_load_image': '<shift>+<f2>',
                 'hotkey_reposition_windows': '<shift>+<f3>',
                 'hotkey_save_session': '<shift>+<f4>',
-                'hotkey_load_session': '<shift>+<f5>'
+                'hotkey_load_session': '<shift>+<f5>',
+                'hotkey_session_manager': '<shift>+<f6>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -249,7 +254,8 @@ class SnipasteApp:
             'hotkey_load_image': 'Load Image from File',
             'hotkey_reposition_windows': 'Reposition All Image Windows to Origin',
             'hotkey_save_session': 'Save Current Session',
-            'hotkey_load_session': 'Load Session'
+            'hotkey_load_session': 'Load Session',
+            'hotkey_session_manager': 'Open Session Manager'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -519,6 +525,34 @@ class SnipasteApp:
     def load_session_dialog(self):
         """Shows dialog to load a session."""
         self.session_manager.load_session_with_dialog()
+    
+    def open_session_manager(self):
+        """Opens the session manager UI."""
+        try:
+            print("DEBUG: open_session_manager called")
+            print(f"DEBUG: Current working directory: {os.getcwd()}")
+            print(f"DEBUG: Python path: {sys.path}")
+            
+            print("DEBUG: Attempting to import SessionManagerUI")
+            from fastshot.session_manager_ui import SessionManagerUI
+            print("DEBUG: SessionManagerUI imported successfully")
+            
+            print(f"DEBUG: Creating SessionManagerUI with app={self}")
+            session_ui = SessionManagerUI(self)
+            print("DEBUG: SessionManagerUI created successfully")
+            
+            print("DEBUG: Calling session_ui.show()")
+            session_ui.show()
+            print("DEBUG: session_ui.show() completed")
+            
+        except ImportError as e:
+            print(f"ERROR: Failed to import SessionManagerUI: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            print(f"ERROR in open_session_manager: {e}")
+            import traceback
+            traceback.print_exc()
 
 def main():
     app = SnipasteApp()

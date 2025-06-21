@@ -230,6 +230,10 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_load_session', '<shift>+<f5>')),
             self.on_load_session
         )
+        self.hotkey_session_manager = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_session_manager', '<shift>+<f6>')),
+            self.on_session_manager
+        )
 
         # Load the 4-times Ctrl hotkey settings
         self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
@@ -294,6 +298,7 @@ class HotkeyListener:
         self.hotkey_reposition_windows.press(self.listener.canonical(key))
         self.hotkey_save_session.press(self.listener.canonical(key))
         self.hotkey_load_session.press(self.listener.canonical(key))
+        self.hotkey_session_manager.press(self.listener.canonical(key))
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             if self.ctrl_press_count < self.ask_dialog_press_count:
@@ -313,6 +318,7 @@ class HotkeyListener:
         self.hotkey_reposition_windows.release(self.listener.canonical(key))
         self.hotkey_save_session.release(self.listener.canonical(key))
         self.hotkey_load_session.release(self.listener.canonical(key))
+        self.hotkey_session_manager.release(self.listener.canonical(key))
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
@@ -419,6 +425,25 @@ class HotkeyListener:
         """Callback for the load session hotkey."""
         print("Load session hotkey activated")
         self.root.after(0, self.app.load_session_dialog)
+
+    def on_session_manager(self):
+        """Callback for the session manager hotkey."""
+        print("Session manager hotkey activated")
+        try:
+            print(f"DEBUG: self.root = {self.root}")
+            print(f"DEBUG: self.app = {self.app}")
+            print(f"DEBUG: hasattr(self.app, 'open_session_manager') = {hasattr(self.app, 'open_session_manager')}")
+            
+            if hasattr(self.app, 'open_session_manager'):
+                print("DEBUG: Calling self.root.after to schedule open_session_manager")
+                self.root.after(0, self.app.open_session_manager)
+                print("DEBUG: self.root.after call completed")
+            else:
+                print("ERROR: app does not have open_session_manager method")
+        except Exception as e:
+            print(f"ERROR in on_session_manager: {e}")
+            import traceback
+            traceback.print_exc()
 
 # 从配置文件加载热键
 def load_config():

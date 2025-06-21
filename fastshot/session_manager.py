@@ -8,8 +8,85 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import simpledialog, filedialog, messagebox
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
+import math
+
+class ThumbnailCreator:
+    """Creates thumbnail collages from multiple images."""
+    
+    @staticmethod
+    def calculate_grid_layout(num_images):
+        """Calculate optimal grid layout for given number of images."""
+        if num_images <= 0:
+            return 1, 1
+        
+        # Target aspect ratio is 4:3
+        target_ratio = 4 / 3
+        
+        # Try different grid configurations
+        best_ratio_diff = float('inf')
+        best_cols, best_rows = 1, 1
+        
+        for cols in range(1, num_images + 1):
+            rows = math.ceil(num_images / cols)
+            current_ratio = cols / rows
+            ratio_diff = abs(current_ratio - target_ratio)
+            
+            if ratio_diff < best_ratio_diff:
+                best_ratio_diff = ratio_diff
+                best_cols, best_rows = cols, rows
+        
+        return best_cols, best_rows
+    
+    @staticmethod
+    def create_thumbnail_collage(images, max_thumb_size=100):
+        """Create a collage of thumbnails from multiple images."""
+        if not images:
+            return None
+        
+        num_images = len(images)
+        cols, rows = ThumbnailCreator.calculate_grid_layout(num_images)
+        
+        # Create thumbnails for each image
+        thumbnails = []
+        for img in images:
+            # Calculate thumbnail size maintaining aspect ratio
+            img_width, img_height = img.size
+            
+            if img_width > img_height:
+                thumb_width = max_thumb_size
+                thumb_height = int((img_height / img_width) * max_thumb_size)
+            else:
+                thumb_height = max_thumb_size
+                thumb_width = int((img_width / img_height) * max_thumb_size)
+            
+            thumbnail = img.resize((thumb_width, thumb_height), Image.LANCZOS)
+            thumbnails.append(thumbnail)
+        
+        # Calculate collage dimensions
+        cell_width = max_thumb_size
+        cell_height = max_thumb_size
+        collage_width = cols * cell_width
+        collage_height = rows * cell_height
+        
+        # Create collage
+        collage = Image.new('RGB', (collage_width, collage_height), (240, 240, 240))
+        
+        for i, thumb in enumerate(thumbnails):
+            row = i // cols
+            col = i % cols
+            
+            # Calculate position to center thumbnail in cell
+            x_offset = (cell_width - thumb.width) // 2
+            y_offset = (cell_height - thumb.height) // 2
+            
+            x = col * cell_width + x_offset
+            y = row * cell_height + y_offset
+            
+            collage.paste(thumb, (x, y))
+        
+        return collage
 
 class SessionManager:
     """Manages saving and loading of FastShot sessions."""
@@ -20,41 +97,182 @@ class SessionManager:
         self.session_dir.mkdir(parents=True, exist_ok=True)
     
     def save_session_with_dialog(self):
-        """Shows dialog to get notes and saves the current session."""
+        """Shows enhanced dialog to get metadata and saves the current session."""
         try:
-            # Get optional notes from user
-            notes = simpledialog.askstring(
-                "Save Session", 
-                "Enter optional notes for this session:",
-                initialvalue=""
-            )
-            
-            # User cancelled
-            if notes is None:
+            # Check if there are any windows to save
+            valid_windows = self._get_valid_windows()
+            if not valid_windows:
+                messagebox.showinfo("No Windows", "No image windows to save.")
                 return
             
-            # Generate filename
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            if notes.strip():
-                # Sanitize notes for filename
-                safe_notes = "".join(c for c in notes if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_notes = safe_notes.replace(' ', '_')[:50]  # Limit length
-                filename = f"{timestamp}_{safe_notes}.fastshot"
-            else:
-                filename = f"{timestamp}_session.fastshot"
+            # Use enhanced save dialog
+            from .enhanced_save_dialog import EnhancedSaveDialog
             
-            filepath = self.session_dir / filename
+            dialog = EnhancedSaveDialog(self.app.root, self.app)
+            metadata = dialog.show()
             
-            # Save the session
-            if self.save_session(filepath):
-                messagebox.showinfo("Success", f"Session saved as:\n{filename}")
-                print(f"Session saved: {filepath}")
+            # User cancelled
+            if metadata is None:
+                return
+            
+            # Check if we should save to cloud
+            if metadata.get('save_to_cloud', False) and hasattr(self.app, 'cloud_sync'):
+                # Save to cloud with encryption and metadata
+                session_data = self._prepare_session_data()
+                filename = self.app.cloud_sync.save_session_to_cloud(session_data, metadata)
+                if filename:
+                    image_count = len(session_data.get('windows', []))
+                    messagebox.showinfo("Success", f"Session saved to cloud as:\n{filename}\n\nSaved {image_count} images")
+                    print(f"Session saved to cloud: {filename} with {image_count} images")
+                else:
+                    messagebox.showerror("Error", "Failed to save session to cloud.")
             else:
-                messagebox.showerror("Error", "Failed to save session.")
+                # Save locally with metadata
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                name = metadata.get('name', '')
+                if name.strip():
+                    # Use name for filename (already sanitized in dialog)
+                    safe_name = name[:50]  # Limit length
+                    filename = f"{timestamp}_{safe_name}.fastshot"
+                else:
+                    # Fallback to description or default
+                    desc = metadata.get('desc', '')
+                    if desc.strip():
+                        # Sanitize description for filename
+                        safe_desc = "".join(c for c in desc if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                        safe_desc = safe_desc.replace(' ', '_')[:50]  # Limit length
+                        filename = f"{timestamp}_{safe_desc}.fastshot"
+                    else:
+                        filename = f"{timestamp}_session.fastshot"
+                
+                filepath = self.session_dir / filename
+                
+                # Save the session with metadata
+                if self.save_session_with_metadata(filepath, metadata):
+                    session_data = self._prepare_session_data()
+                    image_count = len(session_data.get('windows', []))
+                    messagebox.showinfo("Success", f"Session saved as:\n{filename}\n\nSaved {image_count} images")
+                    print(f"Session saved: {filepath} with {image_count} images")
+                else:
+                    messagebox.showerror("Error", "Failed to save session.")
                 
         except Exception as e:
             print(f"Error in save_session_with_dialog: {e}")
             messagebox.showerror("Error", f"Failed to save session: {str(e)}")
+    
+    def _get_valid_windows(self):
+        """Get all valid windows that can be saved (including hidden ones)."""
+        valid_windows = []
+        for window in self.app.windows:
+            try:
+                # Check if window object exists and has required attributes
+                if (hasattr(window, 'img_window') and 
+                    hasattr(window, 'img_label') and 
+                    hasattr(window.img_label, 'original_image')):
+                    
+                    # Don't require window to be visible - include hidden windows too
+                    # Just check if the Tkinter window object exists
+                    if window.img_window.winfo_exists():
+                        valid_windows.append(window)
+                    else:
+                        print(f"Window {id(window)} exists but Tkinter window doesn't exist")
+            except Exception as e:
+                print(f"Error checking window {id(window)}: {e}")
+                continue
+        
+        print(f"Found {len(valid_windows)} valid windows out of {len(self.app.windows)} total windows")
+        return valid_windows
+    
+    def _prepare_session_data(self):
+        """Prepare session data for saving."""
+        session_data = {
+            "version": "1.0",
+            "timestamp": datetime.now().isoformat(),
+            "windows": []
+        }
+        
+        # Get all valid windows (including hidden ones)
+        valid_windows = self._get_valid_windows()
+        
+        # Collect data from all valid image windows
+        for i, window in enumerate(valid_windows):
+            try:
+                window_data = self.serialize_window(window, i)
+                if window_data:
+                    session_data["windows"].append(window_data)
+                    print(f"Successfully serialized window {i}")
+                else:
+                    print(f"Failed to serialize window {i}")
+            except Exception as e:
+                print(f"Error serializing window {i}: {e}")
+                continue
+        
+        print(f"Prepared session data with {len(session_data['windows'])} windows")
+        return session_data
+    
+    def save_session_with_metadata(self, filepath, metadata):
+        """Saves the current session with metadata to a file."""
+        try:
+            session_data = self._prepare_session_data()
+            
+            # Create thumbnail collage
+            thumbnail_collage = self._create_session_thumbnail(session_data)
+            thumbnail_data = None
+            if thumbnail_collage:
+                thumbnail_data = self.serialize_image(thumbnail_collage)
+            
+                            # Add enhanced metadata to session
+                full_session_data = {
+                    'session': session_data,
+                    'metadata': {
+                        'name': metadata.get('name', ''),
+                        'desc': metadata.get('desc', ''),
+                        'tags': metadata.get('tags', []),
+                        'color': metadata.get('color', 'blue'),
+                        'class': metadata.get('class', ''),
+                        'created_at': datetime.now().isoformat(),
+                        'filename': filepath.name,
+                        'image_count': len(session_data.get('windows', [])),
+                        'thumbnail_collage': thumbnail_data
+                    }
+                }
+            
+            # Save to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(full_session_data, f, indent=2, ensure_ascii=False)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error saving session with metadata: {e}")
+            return False
+    
+    def _create_session_thumbnail(self, session_data):
+        """Create a thumbnail collage from all images in the session."""
+        try:
+            windows = session_data.get('windows', [])
+            if not windows:
+                return None
+            
+            # Extract original images from all windows
+            images = []
+            for window_data in windows:
+                original_image_data = window_data.get('original_image_data')
+                if original_image_data:
+                    image = self.deserialize_image(original_image_data)
+                    if image:
+                        images.append(image)
+            
+            if not images:
+                return None
+            
+            # Create thumbnail collage
+            collage = ThumbnailCreator.create_thumbnail_collage(images)
+            return collage
+            
+        except Exception as e:
+            print(f"Error creating session thumbnail: {e}")
+            return None
     
     def load_session_with_dialog(self):
         """Shows file dialog to select and load a session."""
@@ -131,18 +349,29 @@ class SessionManager:
     def serialize_window(self, window, index):
         """Serializes a single ImageWindow to dictionary format."""
         try:
-            # Get window geometry
-            window.img_window.update_idletasks()
-            x = window.img_window.winfo_x()
-            y = window.img_window.winfo_y()
-            width = window.img_window.winfo_width()
-            height = window.img_window.winfo_height()
+            # Get window geometry - handle hidden windows gracefully
+            try:
+                if not window.is_hidden:
+                    window.img_window.update_idletasks()
+                x = window.img_window.winfo_x()
+                y = window.img_window.winfo_y()
+                width = window.img_window.winfo_width()
+                height = window.img_window.winfo_height()
+            except Exception as e:
+                print(f"Warning: Could not get geometry for window {index}, using defaults: {e}")
+                x, y, width, height = 100, 100, 300, 200
             
             # Serialize the current image (with annotations)
             image_data = self.serialize_image(window.img_label.zoomed_image)
+            if not image_data:
+                print(f"Warning: Failed to serialize zoomed image for window {index}")
+                return None
             
             # Serialize the original image
             original_image_data = self.serialize_image(window.img_label.original_image)
+            if not original_image_data:
+                print(f"Error: Failed to serialize original image for window {index}")
+                return None
             
             window_data = {
                 "index": index,
@@ -156,14 +385,17 @@ class SessionManager:
                 "image_data": image_data,
                 "original_image_data": original_image_data,
                 "draw_history": self.serialize_draw_history(window.draw_history),
-                "is_hidden": window.is_hidden,
+                "is_hidden": getattr(window, 'is_hidden', False),
                 "window_id": id(window)  # For debugging
             }
             
+            print(f"Successfully serialized window {index} (hidden: {window_data['is_hidden']})")
             return window_data
             
         except Exception as e:
-            print(f"Error serializing window: {e}")
+            print(f"Error serializing window {index}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def serialize_image(self, image):
@@ -205,11 +437,21 @@ class SessionManager:
         """Loads a session from a file."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
-                session_data = json.load(f)
+                file_data = json.load(f)
+            
+            # Handle both formats: with metadata wrapper and direct session data
+            if 'session' in file_data and 'metadata' in file_data:
+                # New format with metadata wrapper
+                session_data = file_data['session']
+                print(f"Loading session with metadata: {file_data['metadata'].get('desc', 'No description')}")
+            else:
+                # Legacy format - direct session data
+                session_data = file_data
             
             # Validate session data
             if not self.validate_session_data(session_data):
                 print("Invalid session data format")
+                print(f"Session data keys: {list(session_data.keys()) if isinstance(session_data, dict) else 'Not a dict'}")
                 return False
             
             # Load each window
