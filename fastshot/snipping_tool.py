@@ -6,12 +6,13 @@ import io
 import win32gui
 import pyautogui
 import win32con
+from screeninfo import get_monitors
 
 
 class SnippingTool:
     def __init__(self, root, monitors, on_screenshot):
         self.root = root
-        self.monitors = monitors
+        self.monitors = monitors  # Keep for backward compatibility, but will be refreshed
         self.on_screenshot = on_screenshot
         self.overlays = []
         self.canvases = []
@@ -20,6 +21,12 @@ class SnippingTool:
     def start_snipping(self):
         # Clear any existing overlays
         self.exit_snipping()
+
+        # Refresh monitor information in real-time
+        self.monitors = get_monitors()
+        print(f"Detected {len(self.monitors)} monitors for snipping")
+        for i, monitor in enumerate(self.monitors):
+            print(f"Monitor {i}: {monitor.width}x{monitor.height} at ({monitor.x}, {monitor.y})")
 
         self.snipping = True
         self.overlays = []

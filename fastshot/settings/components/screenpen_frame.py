@@ -56,6 +56,29 @@ class ScreenPenFrame(ttk.Frame):
             width=5
         )
         width_spinbox.pack(side='left', padx=5)
+        
+        # 遮罩透明度
+        opacity_frame = ttk.Frame(self)
+        opacity_frame.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(opacity_frame, text="Overlay Opacity:").pack(side='left')
+        self.opacity_var = tk.DoubleVar(value=float(settings.get('overlay_opacity', '0.4')))
+        opacity_scale = ttk.Scale(
+            opacity_frame,
+            from_=0.1,
+            to=1.0,
+            variable=self.opacity_var,
+            orient='horizontal',
+            length=200
+        )
+        opacity_scale.pack(side='left', padx=5)
+        
+        # 透明度百分比显示
+        self.opacity_label = ttk.Label(opacity_frame, text=f"{int(self.opacity_var.get() * 100)}%")
+        self.opacity_label.pack(side='left', padx=5)
+        
+        # 绑定滑块变化事件
+        opacity_scale.configure(command=self.update_opacity_label)
     
     def choose_color(self):
         color = colorchooser.askcolor(color=self.color_var.get())[1]
@@ -71,10 +94,16 @@ class ScreenPenFrame(ttk.Frame):
             outline=''
         )
     
+    def update_opacity_label(self, value):
+        """更新透明度标签显示"""
+        opacity_percent = int(float(value) * 100)
+        self.opacity_label.config(text=f"{opacity_percent}%")
+    
     def get_settings(self):
         """获取当前设置"""
         return {
             'enable_screenpen': str(self.enable_var.get()),
             'pen_color': self.color_var.get(),
-            'pen_width': self.width_var.get()
+            'pen_width': self.width_var.get(),
+            'overlay_opacity': str(self.opacity_var.get())
         } 

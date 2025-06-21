@@ -226,7 +226,8 @@ class SnipasteApp:
                 'enable_screenpen': 'True',
                 'pen_color': 'red',
                 'pen_width': '3',
-                'smooth_factor': '3'
+                'smooth_factor': '3',
+                'overlay_opacity': '0.4'
             }
             with open(config_path, 'w', encoding='utf-8') as configfile:
                 config.write(configfile)
@@ -553,6 +554,15 @@ class SnipasteApp:
             print(f"ERROR in open_session_manager: {e}")
             import traceback
             traceback.print_exc()
+    
+    def update_screen_pen_config(self):
+        """Update Screen Pen configuration after settings change."""
+        if self.screen_pen:
+            # Reload config file
+            self.config.read(self.config_path, encoding='utf-8')
+            # Update Screen Pen with new config
+            self.screen_pen.update_config(self.config)
+            print("Screen Pen configuration updated")
 
 def main():
     app = SnipasteApp()

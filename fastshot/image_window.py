@@ -429,7 +429,7 @@ class ImageWindow:
     def show_llm_settings(self):
         """显示LLM设置窗口"""
         from fastshot.settings import show_settings
-        settings_window = show_settings(self.img_window, active_tab=2)  # 直接打开GenAI标签页
+        settings_window = show_settings(self.img_window, active_tab=2, app=self.app)  # 直接打开GenAI标签页
 
     def power_extract(self):
         """执行内容抽取"""

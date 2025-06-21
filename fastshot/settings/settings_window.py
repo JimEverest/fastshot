@@ -6,10 +6,11 @@ from .components.genai_frame import GenAIFrame
 from .settings_manager import SettingsManager
 
 class SettingsWindow(tk.Toplevel):
-    def __init__(self, parent=None, active_tab=None):
+    def __init__(self, parent=None, active_tab=None, app=None):
         super().__init__(parent)
         self.title("Fastshot Settings")
         self.settings_manager = SettingsManager()
+        self.app = app  # Reference to main app for configuration updates
         
         # 创建标签页
         self.notebook = ttk.Notebook(self)
@@ -52,6 +53,15 @@ class SettingsWindow(tk.Toplevel):
         
         # 保存所有设置
         self.settings_manager.save_settings()
+        
+        # 通知主应用更新Screen Pen配置
+        if self.app and hasattr(self.app, 'update_screen_pen_config'):
+            self.app.update_screen_pen_config()
+        
+        # 显示保存成功消息
+        from tkinter import messagebox
+        messagebox.showinfo("Settings", "Settings saved successfully!")
+        
         self.destroy()
     
     def reset_settings(self):
