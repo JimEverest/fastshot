@@ -35,6 +35,7 @@ from fastshot.image_window import ImageWindow
 from fastshot.screen_pen import ScreenPen  # 导入 ScreenPen
 from fastshot.window_control import HotkeyListener, load_config
 from fastshot.ask_dialog import AskDialog
+from fastshot.session_manager import SessionManager  # 导入 SessionManager
 
 
 import importlib
@@ -124,6 +125,9 @@ class SnipasteApp:
         self.listener = HotkeyListener(self.config, self.root, self)
         self.listener.start()
 
+        # Initialize session manager
+        self.session_manager = SessionManager(self)
+
         # Initialize ScreenPen
         enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)
         if enable_screenpen:
@@ -209,7 +213,9 @@ class SnipasteApp:
                 'hotkey_ask_dialog_time_window': '1.0',
                 'hotkey_toggle_visibility': '<shift>+<f1>',
                 'hotkey_load_image': '<shift>+<f2>',
-                'hotkey_reposition_windows': '<shift>+<f3>'
+                'hotkey_reposition_windows': '<shift>+<f3>',
+                'hotkey_save_session': '<shift>+<f4>',
+                'hotkey_load_session': '<shift>+<f5>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -241,7 +247,9 @@ class SnipasteApp:
             'hotkey_ask_dialog_time_window': 'Ask Dialog time window',
             'hotkey_toggle_visibility': 'Toggle All Image Windows Visibility',
             'hotkey_load_image': 'Load Image from File',
-            'hotkey_reposition_windows': 'Reposition All Image Windows to Origin'
+            'hotkey_reposition_windows': 'Reposition All Image Windows to Origin',
+            'hotkey_save_session': 'Save Current Session',
+            'hotkey_load_session': 'Load Session'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -498,6 +506,19 @@ class SnipasteApp:
 
         except Exception as e:
             print(f"Error during reposition operation: {e}")
+
+    def save_session_dialog(self):
+        """Shows dialog to save the current session."""
+        if not self.windows:
+            from tkinter import messagebox
+            messagebox.showinfo("No Windows", "No image windows to save.")
+            return
+        
+        self.session_manager.save_session_with_dialog()
+
+    def load_session_dialog(self):
+        """Shows dialog to load a session."""
+        self.session_manager.load_session_with_dialog()
 
 def main():
     app = SnipasteApp()

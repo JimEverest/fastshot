@@ -135,6 +135,8 @@ hotkey_ask_dialog_time_window = 1.0
 hotkey_toggle_visibility = <shift>+<f1>     # Toggle visibility of all image windows
 hotkey_load_image = <shift>+<f2>            # Load image from file
 hotkey_reposition_windows = <shift>+<f3>    # Reposition all image windows to origin
+hotkey_save_session = <shift>+<f4>          # Save current session to file
+hotkey_load_session = <shift>+<f5>          # Load session from file
 ```
 
 

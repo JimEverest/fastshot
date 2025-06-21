@@ -221,6 +221,15 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_reposition_windows', '<shift>+<f3>')),
             self.on_reposition_windows
         )
+        # Add new hotkeys for session save/load
+        self.hotkey_save_session = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_save_session', '<shift>+<f4>')),
+            self.on_save_session
+        )
+        self.hotkey_load_session = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_load_session', '<shift>+<f5>')),
+            self.on_load_session
+        )
 
         # Load the 4-times Ctrl hotkey settings
         self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
@@ -283,6 +292,8 @@ class HotkeyListener:
         self.hotkey_toggle_visibility.press(self.listener.canonical(key))
         self.hotkey_load_image.press(self.listener.canonical(key))
         self.hotkey_reposition_windows.press(self.listener.canonical(key))
+        self.hotkey_save_session.press(self.listener.canonical(key))
+        self.hotkey_load_session.press(self.listener.canonical(key))
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             if self.ctrl_press_count < self.ask_dialog_press_count:
@@ -300,6 +311,8 @@ class HotkeyListener:
         self.hotkey_toggle_visibility.release(self.listener.canonical(key))
         self.hotkey_load_image.release(self.listener.canonical(key))
         self.hotkey_reposition_windows.release(self.listener.canonical(key))
+        self.hotkey_save_session.release(self.listener.canonical(key))
+        self.hotkey_load_session.release(self.listener.canonical(key))
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
@@ -396,6 +409,16 @@ class HotkeyListener:
         """Callback for the reposition windows hotkey."""
         print("Reposition windows hotkey activated")
         self.root.after(0, self.app.reposition_all_image_windows)
+
+    def on_save_session(self):
+        """Callback for the save session hotkey."""
+        print("Save session hotkey activated")
+        self.root.after(0, self.app.save_session_dialog)
+
+    def on_load_session(self):
+        """Callback for the load session hotkey."""
+        print("Load session hotkey activated")
+        self.root.after(0, self.app.load_session_dialog)
 
 # 从配置文件加载热键
 def load_config():
