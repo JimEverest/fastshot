@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
 import win32clipboard
@@ -7,6 +7,7 @@ from pynput import keyboard
 import os
 import ctypes # Import ctypes if not already present
 import time # Add time import
+import threading
 
 from .paint_tool import PaintTool
 from .text_tool import TextTool
@@ -164,8 +165,15 @@ class ImageWindow:
         self.llm_extractor = LLMExtractor()
         self.is_hidden = False # Track visibility state
         self.zoom_indicator_ref = None # Reference to the zoom indicator
+        self.context_menu_active = False  # Track if context menu is active
+        self.context_menu = None  # Store reference to context menu
+        self.global_key_listener = None  # For global key monitoring when menu is active
+        self.menu_shortcuts = {}  # Initialize shortcuts dictionary
 
         self.setup_hotkey_listener()
+        
+        # Pre-start global keyboard listener for instant menu response
+        self.setup_persistent_key_listener()
 
     def setup_hotkey_listener(self):
         def on_activate_paint():
@@ -230,46 +238,75 @@ class ImageWindow:
 
     def show_context_menu(self, event):
         self.create_context_menu()
+        self.context_menu_active = True
+        
+        # Bind menu unpost event to cleanup
+        self.context_menu.bind('<Unmap>', self.on_menu_close)
+        
+        # Bind click outside to close menu
+        self.img_window.bind('<Button-1>', self.on_click_outside_menu)
+        self.img_window.bind('<Escape>', self.on_escape_menu)
+        
+        # Post the menu
         self.context_menu.post(event.x_root, event.y_root)
+        
+        print("🎯 Context menu posted - keyboard shortcuts now active")
 
     def create_context_menu(self):
+        # Destroy any existing context menu first
+        if self.context_menu:
+            try:
+                self.context_menu.destroy()
+            except:
+                pass
+        
         self.context_menu = tk.Menu(self.img_window, tearoff=0)
         
-        # 使用 Unicode 字符作为图标
-        icons = {
-            "Copy": "📋",
-            "Close": "❌",
-            "Save As...": "💾",
-            "Paint": "🎨",
-            "Undo": "↺",
-            "Exit Edit": "🚪",
-            "Text": "��",
-            "OCR": "🧾",
-            "Ask": "💬",
-            "PowerExtract": "🔍"  # 新增图标
-        }
+        # 使用 Unicode 字符作为图标，并添加快捷键标签
+        menu_items = [
+            ("Copy", "📋", "[C]", self.copy),
+            ("Close", "❌", "[X]", self.close),
+            ("Save As...", "💾", "[S]", self.save_as),
+            ("Paint", "🎨", "[P]", self.paint),
+            ("Undo", "↺", "[Z]", self.undo),
+            ("Exit Edit", "🚪", "[E]", self.exit_edit_mode),
+            ("Text", "📝", "[T]", self.text),
+            ("OCR", "🧾", "[O]", self.ocr),
+            ("Ask", "💬", "[Q]", self.open_ask_dialog),
+            ("PowerExtract", "🔍", "", self.power_extract),  # No shortcut for this one
+            ("Close All", "🗑️", "[A]", self.close_all),  # New close all function
+        ]
 
-        commands = {
-            "Copy": self.copy,
-            "Close": self.close,
-            "Save As...": self.save_as,
-            "Paint": self.paint,
-            "Undo": self.undo,
-            "Exit Edit": self.exit_edit_mode,
-            "Text": self.text,
-            "OCR": self.ocr,
-            "Ask": self.open_ask_dialog,
-            "PowerExtract": self.power_extract  # 新增命令
+        # Store commands for keyboard shortcuts (update the instance variable)
+        self.menu_shortcuts = {
+            'c': self.copy,
+            'x': self.close,
+            's': self.save_as,
+            'p': self.paint,
+            'z': self.undo,
+            'e': self.exit_edit_mode,
+            't': self.text,
+            'o': self.ocr,
+            'q': self.open_ask_dialog,
+            'a': self.close_all,  # Add shortcut for close all
         }
+        print(f"📝 Menu shortcuts updated: {list(self.menu_shortcuts.keys())}")
 
-        for label, icon in icons.items():
-            self.context_menu.add_command(label=f"{icon} {label}", command=commands[label])
+        for label, icon, shortcut, command in menu_items:
+            if shortcut:
+                menu_label = f"{icon} {label} {shortcut}"
+            else:
+                menu_label = f"{icon} {label}"
+            self.context_menu.add_command(label=menu_label, command=command)
             
         # 添加分隔符和设置选项
         self.context_menu.add_separator()
         self.context_menu.add_command(label="⚙️ LLM Settings", command=self.show_llm_settings)
 
     def close(self):
+        # Stop persistent keyboard listener
+        self.stop_persistent_key_listener()
+        
         # Ensure zoom indicator is destroyed if the window is closed
         if self.zoom_indicator_ref and self.zoom_indicator_ref.winfo_exists():
             self.zoom_indicator_ref.destroy()
@@ -284,8 +321,69 @@ class ImageWindow:
         if self in self.app.windows:
             self.app.windows.remove(self)
         # Update indicator if windows are hidden and this window was part of the count
-        if self.app.all_windows_hidden and was_hidden:
+        if hasattr(self.app, 'all_windows_hidden') and self.app.all_windows_hidden and was_hidden:
              self.app.update_indicator_on_close()
+
+    def close_all(self):
+        """Close all image windows with confirmation dialog"""
+        try:
+            # Count active windows
+            active_windows = [w for w in self.app.windows if w.img_window.winfo_exists()]
+            window_count = len(active_windows)
+            
+            if window_count == 0:
+                messagebox.showinfo(
+                    "No Windows", 
+                    "There are no image windows to close.",
+                    parent=self.img_window
+                )
+                return
+            
+            # Show confirmation dialog
+            message = f"Are you sure you want to close all {window_count} image window{'s' if window_count > 1 else ''}?"
+            title = "Close All Windows"
+            
+            result = messagebox.askyesno(
+                title, 
+                message,
+                parent=self.img_window,
+                icon='warning'
+            )
+            
+            if result:
+                # Close all windows
+                windows_to_close = active_windows.copy()  # Create a copy to avoid iteration issues
+                closed_count = 0
+                
+                for window in windows_to_close:
+                    try:
+                        if window.img_window.winfo_exists():
+                            window.close()
+                            closed_count += 1
+                    except Exception as e:
+                        print(f"Error closing window: {e}")
+                        continue
+                
+                print(f"✅ Successfully closed {closed_count} image windows")
+                
+                # Show completion message if some windows were closed
+                if closed_count > 0:
+                    # Use a simple print instead of messagebox since windows might be gone
+                    print(f"🗑️ Closed {closed_count} image window{'s' if closed_count > 1 else ''}")
+            else:
+                print("❌ Close all operation cancelled by user")
+                
+        except Exception as e:
+            print(f"💥 Error in close_all: {e}")
+            # Show error message to user
+            try:
+                messagebox.showerror(
+                    "Error",
+                    f"An error occurred while closing windows:\n{str(e)}",
+                    parent=self.img_window
+                )
+            except:
+                print(f"Could not show error dialog: {e}")
 
     def save_as(self):
         file_path = filedialog.asksaveasfilename(
@@ -430,6 +528,125 @@ class ImageWindow:
         """显示LLM设置窗口"""
         from fastshot.settings import show_settings
         settings_window = show_settings(self.img_window, active_tab=2, app=self.app)  # 直接打开GenAI标签页
+
+
+
+    def on_menu_close(self, event=None):
+        """Handle context menu close event"""
+        self.close_context_menu()
+
+    def on_click_outside_menu(self, event=None):
+        """Handle click outside menu to close it"""
+        if self.context_menu_active:
+            self.close_context_menu()
+
+    def on_escape_menu(self, event=None):
+        """Handle Escape key to close menu"""
+        print("Escape key detected, closing menu")
+        if self.context_menu_active:
+            self.close_context_menu()
+
+    def close_context_menu(self):
+        """Close context menu and cleanup keyboard bindings"""
+        if self.context_menu_active:
+            self.context_menu_active = False
+            
+            # Unbind only the events we actually bound
+            try:
+                self.img_window.unbind('<Button-1>')
+                self.img_window.unbind('<Escape>')
+            except:
+                pass  # Events might not be bound
+            
+            # Restore original Button-1 binding for window movement
+            self.img_window.bind('<Button-1>', self.start_move)
+            
+            # Close the menu if it exists and is posted
+            if self.context_menu:
+                try:
+                    self.context_menu.unpost()
+                    self.context_menu.destroy()  # Properly destroy the menu
+                    self.context_menu = None
+                except Exception as e:
+                    print(f"Error closing context menu: {e}")
+            
+            print("✅ Context menu closed - keyboard shortcuts deactivated")
+
+    def setup_persistent_key_listener(self):
+        """Setup a persistent global keyboard listener that runs throughout the window's lifetime"""
+        def on_persistent_key_press(key):
+            try:
+                # Only respond when context menu is active
+                if not self.context_menu_active:
+                    return True  # Continue listening but don't process
+                
+                # Convert key to character
+                if hasattr(key, 'char') and key.char:
+                    key_char = key.char.lower()
+                elif hasattr(key, 'name'):
+                    key_char = key.name.lower()
+                else:
+                    key_char = str(key).lower().replace('key.', '')
+                
+                print(f"🔥 Key '{key_char}' detected while menu active")
+                
+                # Handle Escape key to close menu
+                if key_char == 'esc' or key_char == 'escape':
+                    def close_menu():
+                        self.close_context_menu()
+                    self.img_window.after(0, close_menu)
+                    return True  # Continue listening
+                
+                # Handle shortcut keys
+                if key_char in self.menu_shortcuts:
+                    command = self.menu_shortcuts[key_char]
+                    def execute_command():
+                        try:
+                            print(f"🚀 Executing command for key: {key_char}")
+                            self.close_context_menu()
+                            command()
+                            print(f"✅ Successfully executed menu command for key: {key_char}")
+                        except Exception as e:
+                            print(f"❌ Error executing menu command for key {key_char}: {e}")
+                    
+                    # Schedule execution in main thread
+                    self.img_window.after(0, execute_command)
+                    return True  # Continue listening
+                else:
+                    print(f"🔍 Key '{key_char}' not in shortcuts: {list(self.menu_shortcuts.keys())}")
+                        
+            except Exception as e:
+                print(f"💥 Error in persistent key listener: {e}")
+            
+            return True  # Always continue listening
+        
+        try:
+            # Stop any existing listener first
+            if self.global_key_listener:
+                try:
+                    if self.global_key_listener.running:
+                        self.global_key_listener.stop()
+                except:
+                    pass
+            
+            self.global_key_listener = keyboard.Listener(on_press=on_persistent_key_press)
+            self.global_key_listener.start()
+            print("⚡ Persistent keyboard listener started")
+        except Exception as e:
+            print(f"💥 Failed to start persistent keyboard listener: {e}")
+            self.global_key_listener = None
+
+    def stop_persistent_key_listener(self):
+        """Stop the persistent keyboard listener"""
+        if self.global_key_listener:
+            try:
+                if self.global_key_listener.running:
+                    self.global_key_listener.stop()
+                self.global_key_listener = None
+                print("⚡ Persistent keyboard listener stopped")
+            except Exception as e:
+                print(f"💥 Error stopping persistent keyboard listener: {e}")
+                self.global_key_listener = None
 
     def power_extract(self):
         """执行内容抽取"""
