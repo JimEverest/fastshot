@@ -108,11 +108,25 @@ Bucket access denied
 
 ## 技术实现细节
 
-FastShot使用以下方式处理SSL验证：
+FastShot使用以下多层方式处理SSL验证问题：
 
-1. **boto3配置**：通过 `Config(verify=False)` 禁用SSL验证
-2. **urllib3警告抑制**：自动抑制SSL警告信息
-3. **环境变量设置**：清空CA证书路径环境变量
-4. **代理支持**：通过boto3的代理配置传递代理设置
+1. **环境变量设置**：清空CA证书路径环境变量
+   - `CURL_CA_BUNDLE = ''`
+   - `REQUESTS_CA_BUNDLE = ''`
+   - `SSL_VERIFY = 'false'`
 
-这种实现确保了在代理环境中的兼容性，同时保持了配置的灵活性。 
+2. **SSL上下文修改**：创建不验证证书的SSL上下文
+   - `ssl._create_default_https_context = ssl._create_unverified_context`
+
+3. **urllib3警告抑制**：自动抑制SSL警告信息
+
+4. **Requests库补丁**：动态修改requests库的行为
+   - 强制所有请求使用 `verify=False`
+
+5. **Botocore补丁**：修改botocore的HTTP会话行为
+   - 设置 `cert_reqs = 'CERT_NONE'`
+   - 设置 `check_hostname = False`
+
+6. **代理支持**：通过boto3的代理配置传递代理设置
+
+这种多层防护的实现确保了在各种代理环境中的兼容性，即使某些方法失效，其他方法仍能确保SSL验证被正确禁用。 

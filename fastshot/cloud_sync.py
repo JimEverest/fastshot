@@ -179,16 +179,23 @@ class CloudSyncManager:
                 }
                 config_kwargs['proxies'] = proxies
                 print(f"DEBUG: Using proxy: {self.proxy_url}")
-                
-                # For proxy environments, often need to disable SSL verification
-                if not ssl_verify:
-                    config_kwargs['use_ssl'] = False
-                    # Also set environment variable for requests
-                    os.environ['CURL_CA_BUNDLE'] = ''
-                    os.environ['REQUESTS_CA_BUNDLE'] = ''
             
-            # Add SSL verification setting
-            config_kwargs['verify'] = ssl_verify
+            # Simple and effective SSL verification bypass
+            if not ssl_verify:
+                print("DEBUG: Applying simple SSL verification bypass...")
+                
+                # Set environment variables to disable SSL verification
+                os.environ['CURL_CA_BUNDLE'] = ''
+                os.environ['REQUESTS_CA_BUNDLE'] = ''
+                os.environ['PYTHONHTTPSVERIFY'] = '0'
+                
+                # Disable SSL verification globally
+                import ssl
+                import urllib3
+                ssl._create_default_https_context = ssl._create_unverified_context
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
+                print("DEBUG: SSL verification bypass completed")
             
             print(f"DEBUG: Creating S3 client for region: {self.aws_region}, SSL verify: {ssl_verify}")
             
@@ -522,8 +529,6 @@ class CloudSyncManager:
                         'https': self.proxy_url
                     }
                     sts_config_kwargs['proxies'] = proxies
-                
-                sts_config_kwargs['verify'] = ssl_verify
                 
                 sts_client = boto3.client(
                     'sts',
