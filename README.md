@@ -90,6 +90,19 @@ proxy_url = http://username:password@proxy.com:8080
 
 **Note**: All session data is encrypted before upload to S3 using the encryption key you provide. The data is also disguised within image files for additional security.
 
+### Proxy and SSL Configuration
+
+For environments using proxy servers, additional SSL configuration may be needed:
+
+```ini
+[CloudSync]
+proxy_enabled = true
+proxy_url = http://username:password@proxy.company.com:8080
+ssl_verify = false  # Disable SSL verification if proxy causes certificate issues
+```
+
+⚠️ **Security Warning**: Disabling SSL verification reduces security. Only use this setting in proxy environments where certificate validation fails. See `PROXY_SSL_GUIDE.md` for detailed troubleshooting.
+
 ## Installation
 
 You can install Fastshot from PyPI:

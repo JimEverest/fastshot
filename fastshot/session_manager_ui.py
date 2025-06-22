@@ -310,6 +310,19 @@ class SessionManagerUI:
         self.proxy_url_entry = ttk.Entry(proxy_frame, width=50)
         self.proxy_url_entry.pack(fill=tk.X, pady=(0, 10))
         
+        # SSL Verification Settings
+        ssl_frame = ttk.LabelFrame(scrollable_frame, text="SSL Configuration", padding="10")
+        ssl_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        self.ssl_verify_var = tk.BooleanVar()
+        ssl_checkbox = ttk.Checkbutton(ssl_frame, text="Enable SSL Certificate Verification", variable=self.ssl_verify_var)
+        ssl_checkbox.pack(anchor=tk.W, pady=5)
+        
+        # Add warning label
+        warning_label = ttk.Label(ssl_frame, text="⚠️ Disable SSL verification only in proxy environments where certificate validation fails.\nThis reduces security and should not be used in production.", 
+                                 foreground="orange", font=("Arial", 9))
+        warning_label.pack(anchor=tk.W, pady=(5, 10))
+        
         # Buttons
         button_frame = ttk.Frame(scrollable_frame)
         button_frame.pack(fill=tk.X, padx=10, pady=20)
@@ -894,6 +907,10 @@ class SessionManagerUI:
         self.encryption_key_entry.insert(0, self.cloud_sync.encryption_key)
         self.proxy_enabled_var.set(self.cloud_sync.proxy_enabled)
         self.proxy_url_entry.insert(0, self.cloud_sync.proxy_url)
+        
+        # Load SSL verification setting
+        ssl_verify = self.cloud_sync.config.getboolean('CloudSync', 'ssl_verify', fallback=True)
+        self.ssl_verify_var.set(ssl_verify)
     
     def _save_cloud_settings(self):
         """Save cloud settings."""
@@ -914,6 +931,7 @@ class SessionManagerUI:
             self.app.config['CloudSync']['encryption_key'] = self.encryption_key_entry.get().strip()
             self.app.config['CloudSync']['proxy_enabled'] = str(self.proxy_enabled_var.get())
             self.app.config['CloudSync']['proxy_url'] = self.proxy_url_entry.get().strip()
+            self.app.config['CloudSync']['ssl_verify'] = str(self.ssl_verify_var.get())
             
             # Save to file
             with open(self.app.config_path, 'w', encoding='utf-8') as f:
@@ -929,6 +947,10 @@ class SessionManagerUI:
             
             if secret_key and len(secret_key) != 40:
                 messagebox.showwarning("Credential Warning", f"AWS Secret Key length is {len(secret_key)}, expected 40 characters.")
+            
+            # Show SSL warning if disabled
+            if not self.ssl_verify_var.get():
+                messagebox.showwarning("Security Warning", "SSL verification is disabled. This reduces security and should only be used in proxy environments where certificate validation fails.")
             
             messagebox.showinfo("Success", "Cloud settings saved successfully.")
             

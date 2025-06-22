@@ -164,6 +164,13 @@ class CloudSyncManager:
             # Configure proxy if enabled
             config_kwargs = {'region_name': self.aws_region}
             
+            # SSL verification settings for proxy environments
+            ssl_verify = self.config.getboolean('CloudSync', 'ssl_verify', fallback=True)
+            if not ssl_verify:
+                print("WARNING: SSL verification disabled - this is not recommended for production use")
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
             if self.proxy_enabled and self.proxy_url:
                 parsed_proxy = urlparse(self.proxy_url)
                 proxies = {
@@ -172,8 +179,18 @@ class CloudSyncManager:
                 }
                 config_kwargs['proxies'] = proxies
                 print(f"DEBUG: Using proxy: {self.proxy_url}")
+                
+                # For proxy environments, often need to disable SSL verification
+                if not ssl_verify:
+                    config_kwargs['use_ssl'] = False
+                    # Also set environment variable for requests
+                    os.environ['CURL_CA_BUNDLE'] = ''
+                    os.environ['REQUESTS_CA_BUNDLE'] = ''
             
-            print(f"DEBUG: Creating S3 client for region: {self.aws_region}")
+            # Add SSL verification setting
+            config_kwargs['verify'] = ssl_verify
+            
+            print(f"DEBUG: Creating S3 client for region: {self.aws_region}, SSL verify: {ssl_verify}")
             
             # Create S3 client
             self.s3_client = boto3.client(
@@ -495,11 +512,24 @@ class CloudSyncManager:
             
             # First try to check if we can access AWS at all
             try:
+                # Use same SSL and proxy settings for STS client
+                ssl_verify = self.config.getboolean('CloudSync', 'ssl_verify', fallback=True)
+                sts_config_kwargs = {'region_name': self.aws_region}
+                
+                if self.proxy_enabled and self.proxy_url:
+                    proxies = {
+                        'http': self.proxy_url,
+                        'https': self.proxy_url
+                    }
+                    sts_config_kwargs['proxies'] = proxies
+                
+                sts_config_kwargs['verify'] = ssl_verify
+                
                 sts_client = boto3.client(
                     'sts',
                     aws_access_key_id=self.aws_access_key,
                     aws_secret_access_key=self.aws_secret_key,
-                    region_name=self.aws_region
+                    config=Config(**sts_config_kwargs)
                 )
                 identity = sts_client.get_caller_identity()
                 print(f"DEBUG: AWS credentials valid, Account: {identity.get('Account', 'Unknown')}")
