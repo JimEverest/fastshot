@@ -11,3 +11,13 @@ dist/
 build/
 decoded/*
 
+SCREENSHOT_SCREENPEN_OPTIMIZATIONS.md
+temp.png
+UI_ERROR_FIX.md
+fastshot/plugins/plugin_hyder.py
+fastshot/plugins/plugin_mini.py
+fastshot/plugins/plugin_retriver.py
+fastshot/plugins/utils/hyder.py
+temp.png
+output/2025-06-21-22-00-43-121.png
+tests/test_one_api.py
