@@ -117,15 +117,10 @@ class SessionManager:
             
             # Check if we should save to cloud
             if metadata.get('save_to_cloud', False) and hasattr(self.app, 'cloud_sync'):
-                # Save to cloud with encryption and metadata
-                session_data = self._prepare_session_data()
-                filename = self.app.cloud_sync.save_session_to_cloud(session_data, metadata)
-                if filename:
-                    image_count = len(session_data.get('windows', []))
-                    messagebox.showinfo("Success", f"Session saved to cloud as:\n{filename}\n\nSaved {image_count} images")
-                    print(f"Session saved to cloud: {filename} with {image_count} images")
-                else:
-                    messagebox.showerror("Error", "Failed to save session to cloud.")
+                # Cloud save is now handled by the enhanced save dialog with progress
+                # The dialog will show progress and handle the save operation
+                # If we get here, the save was successful (dialog only returns on success)
+                print("Cloud save completed successfully via enhanced dialog")
             else:
                 # Save locally with metadata
                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")

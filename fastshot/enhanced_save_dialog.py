@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import json
 from pathlib import Path
+import threading
 
 class EnhancedSaveDialog:
     """Enhanced save dialog with metadata fields."""
@@ -346,7 +347,7 @@ class EnhancedSaveDialog:
         if tags:
             self._save_tags(tags)
         if class_name:
-            self._save_classes([class_name])
+            self._save_classes(class_name)
         
         # Prepare result
         self.result = {
@@ -358,6 +359,129 @@ class EnhancedSaveDialog:
             'save_to_cloud': save_to_cloud
         }
         
+        # If saving to cloud, show progress dialog
+        if save_to_cloud and hasattr(self.app, 'cloud_sync') and self.app.cloud_sync.cloud_sync_enabled:
+            self._save_with_progress()
+        else:
+            self.dialog.destroy()
+    
+    def _save_with_progress(self):
+        """Save with progress dialog for cloud operations."""
+        # Create progress dialog
+        self.progress_dialog = tk.Toplevel(self.dialog)
+        self.progress_dialog.title("Saving Session")
+        self.progress_dialog.geometry("400x150")
+        self.progress_dialog.resizable(False, False)
+        self.progress_dialog.transient(self.dialog)
+        self.progress_dialog.grab_set()
+        
+        # Center progress dialog
+        self.progress_dialog.update_idletasks()
+        x = self.dialog.winfo_x() + (self.dialog.winfo_width() // 2) - 200
+        y = self.dialog.winfo_y() + (self.dialog.winfo_height() // 2) - 75
+        self.progress_dialog.geometry(f"400x150+{x}+{y}")
+        
+        # Progress dialog content
+        progress_frame = ttk.Frame(self.progress_dialog, padding="20")
+        progress_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Progress label
+        self.progress_label = ttk.Label(progress_frame, text="Initializing save operation...")
+        self.progress_label.pack(pady=(0, 10))
+        
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(progress_frame, mode='determinate', length=350)
+        self.progress_bar.pack(pady=(0, 10))
+        
+        # Cancel button
+        self.cancel_button = ttk.Button(progress_frame, text="Cancel", command=self._cancel_save)
+        self.cancel_button.pack()
+        
+        # Start save operation in background thread
+        self.save_cancelled = False
+        import threading
+        self.save_thread = threading.Thread(target=self._perform_save_operation, daemon=True)
+        self.save_thread.start()
+        
+        # Check progress periodically
+        self._check_save_progress()
+    
+    def _perform_save_operation(self):
+        """Perform the actual save operation in background thread."""
+        try:
+            # Get session data from app
+            session_data = self.app.session_manager._prepare_session_data()
+            
+            # Save to cloud with progress callback
+            filename = self.app.cloud_sync.save_session_to_cloud(
+                session_data, 
+                self.result, 
+                progress_callback=self._update_progress
+            )
+            
+            # Store result
+            self.save_result = filename
+            self.save_error = None
+            
+        except Exception as e:
+            self.save_result = None
+            self.save_error = str(e)
+    
+    def _update_progress(self, progress, message):
+        """Update progress from background thread."""
+        # Store progress info for main thread to pick up
+        self.current_progress = progress
+        self.current_message = message
+    
+    def _check_save_progress(self):
+        """Check save progress and update UI (runs in main thread)."""
+        if self.save_cancelled:
+            return
+        
+        # Update progress if available
+        if hasattr(self, 'current_progress') and hasattr(self, 'current_message'):
+            progress = self.current_progress
+            message = self.current_message
+            
+            if progress >= 0:
+                self.progress_bar['value'] = progress
+                self.progress_label.config(text=message)
+            else:
+                # Error occurred
+                self.progress_label.config(text=f"Error: {message}")
+                self.cancel_button.config(text="Close")
+                return
+        
+        # Check if save thread is done
+        if hasattr(self, 'save_thread') and not self.save_thread.is_alive():
+            # Save operation completed
+            if hasattr(self, 'save_result'):
+                if self.save_result:
+                    # Success
+                    self.progress_bar['value'] = 100
+                    self.progress_label.config(text="Save completed successfully!")
+                    self.dialog.after(1000, self._close_progress_and_dialog)  # Close after 1 second
+                else:
+                    # Failed
+                    error_msg = getattr(self, 'save_error', 'Unknown error')
+                    self.progress_label.config(text=f"Save failed: {error_msg}")
+                    self.cancel_button.config(text="Close")
+            return
+        
+        # Continue checking
+        self.dialog.after(100, self._check_save_progress)
+    
+    def _cancel_save(self):
+        """Cancel the save operation."""
+        self.save_cancelled = True
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.destroy()
+        # Don't destroy main dialog, let user try again
+    
+    def _close_progress_and_dialog(self):
+        """Close both progress dialog and main dialog after successful save."""
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.destroy()
         self.dialog.destroy()
     
     def _cancel(self):

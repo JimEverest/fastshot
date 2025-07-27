@@ -7,6 +7,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 import math
+from .meta_cache import MetaCacheManager
+from .async_operations import get_async_manager, CloudMetadataSyncOperation
 
 class SessionManagerUI:
     """Session Manager UI with local and cloud file management."""
@@ -20,6 +22,33 @@ class SessionManagerUI:
             print(f"DEBUG: session_manager = {self.session_manager}")
             self.cloud_sync = getattr(app, 'cloud_sync', None)
             print(f"DEBUG: cloud_sync = {self.cloud_sync}")
+            
+            # Initialize metadata cache manager
+            try:
+                self.meta_cache = MetaCacheManager()
+                print("DEBUG: MetaCacheManager initialized successfully")
+            except Exception as e:
+                print(f"WARNING: Failed to initialize MetaCacheManager: {e}")
+                self.meta_cache = None
+            
+            # Initialize async operation manager
+            try:
+                self.async_manager = get_async_manager()
+                print("DEBUG: AsyncOperationManager initialized successfully")
+                
+                # Initialize cloud metadata sync operation
+                if self.cloud_sync and self.meta_cache:
+                    self.cloud_metadata_sync = CloudMetadataSyncOperation(
+                        self.cloud_sync, self.meta_cache, self.async_manager
+                    )
+                    print("DEBUG: CloudMetadataSyncOperation initialized successfully")
+                else:
+                    self.cloud_metadata_sync = None
+                    print("DEBUG: CloudMetadataSyncOperation not available (missing cloud_sync or meta_cache)")
+            except Exception as e:
+                print(f"WARNING: Failed to initialize AsyncOperationManager: {e}")
+                self.async_manager = None
+                self.cloud_metadata_sync = None
             
             # UI state
             self.current_page = 1
@@ -250,6 +279,14 @@ class SessionManagerUI:
         if tab_type == 'cloud':
             ttk.Button(action_frame, text="Test Connection", command=self._test_cloud_connection).pack(side=tk.LEFT, padx=5)
             ttk.Button(action_frame, text="Manual Sync", command=self._manual_sync).pack(side=tk.LEFT, padx=5)
+            
+            # Cache management buttons
+            ttk.Separator(action_frame, orient='vertical').pack(side=tk.LEFT, padx=10, fill='y')
+            ttk.Button(action_frame, text="Smart Sync", command=self._smart_cache_sync).pack(side=tk.LEFT, padx=5)
+            ttk.Button(action_frame, text="Rebuild All Indexes", command=self._rebuild_all_indexes).pack(side=tk.LEFT, padx=5)
+            ttk.Button(action_frame, text="Rebuild Overall List", command=self._rebuild_overall_list).pack(side=tk.LEFT, padx=5)
+            ttk.Button(action_frame, text="Cache Cleanup", command=self._cleanup_cache).pack(side=tk.LEFT, padx=5)
+            ttk.Button(action_frame, text="Cache Status", command=self._show_cache_status).pack(side=tk.LEFT, padx=5)
     
     def _create_settings_tab(self):
         """Create cloud settings tab."""
@@ -397,11 +434,617 @@ class SessionManagerUI:
         return sessions
     
     def _load_cloud_sessions_with_metadata(self):
-        """Load cloud sessions with metadata extraction."""
+        """Load cloud sessions with metadata extraction using async approach."""
         sessions = []
         
         if not self.cloud_sync:
             return sessions
+        
+        # First, try to load from cache for immediate display
+        cached_sessions = self._load_cached_cloud_sessions()
+        if cached_sessions:
+            print(f"DEBUG: Loaded {len(cached_sessions)} sessions from cache")
+            sessions = cached_sessions
+            
+            # Update UI immediately with cached data
+            self.cloud_sessions = sessions
+            self.window.after(0, lambda: self._apply_filters('cloud'))
+            
+            # Start background sync to update cache
+            self._start_background_sync()
+            
+            return sessions
+        
+        # If no cache available, load basic info immediately and metadata asynchronously
+        print("DEBUG: No cache available, loading basic info immediately...")
+        return self._load_cloud_sessions_async()
+    
+    def _load_cached_cloud_sessions(self):
+        """Load cloud sessions from local cache."""
+        if not self.meta_cache:
+            return []
+        
+        try:
+            cached_metadata = self.meta_cache.get_cached_metadata()
+            sessions = []
+            
+            for meta_data in cached_metadata:
+                try:
+                    # Extract metadata from cache entry
+                    metadata = meta_data.get('metadata', {})
+                    filename = meta_data.get('filename', '')
+                    
+                    if not filename:
+                        continue
+                    
+                    # Create session info from cached metadata
+                    session_info = {
+                        'filename': filename,
+                        'size': metadata.get('file_size', 0),
+                        'last_modified': self._parse_datetime(metadata.get('created_at', '')),
+                        'source': 'cloud',
+                        'name': metadata.get('name', ''),
+                        'desc': metadata.get('desc', ''),
+                        'tags': metadata.get('tags', []),
+                        'color': metadata.get('color', ''),
+                        'class': metadata.get('class', ''),
+                        'image_count': metadata.get('image_count', 0),
+                        'thumbnail_collage': metadata.get('thumbnail_collage', None)
+                    }
+                    sessions.append(session_info)
+                    
+                except Exception as e:
+                    print(f"Warning: Error processing cached metadata for {meta_data.get('filename', 'unknown')}: {e}")
+                    continue
+            
+            return sessions
+            
+        except Exception as e:
+            print(f"Error loading cached cloud sessions: {e}")
+            return []
+    
+    def _load_cloud_sessions_async(self):
+        """Load cloud sessions with immediate basic info display and async metadata loading."""
+        sessions = []
+        
+        try:
+            # Step 1: Get basic session list immediately (this is fast)
+            print("DEBUG: Loading basic session list from cloud...")
+            cloud_list = self.cloud_sync.list_cloud_sessions()
+            print(f"DEBUG: Found {len(cloud_list)} cloud sessions")
+            
+            # Step 2: Create sessions with basic info immediately
+            for session in cloud_list:
+                session_info = {
+                    'filename': session['filename'],
+                    'size': session['size'],
+                    'last_modified': session['last_modified'],
+                    'source': 'cloud',
+                    # Basic metadata (will be updated asynchronously)
+                    'name': '',
+                    'desc': 'Loading...',
+                    'tags': [],
+                    'color': '',
+                    'class': '',
+                    'image_count': 0,
+                    'thumbnail_collage': None,
+                    # Mark as loading
+                    '_loading_metadata': True
+                }
+                sessions.append(session_info)
+            
+            # Step 3: Update UI immediately with basic info
+            self.cloud_sessions = sessions
+            self.window.after(0, lambda: self._apply_filters('cloud'))
+            
+            # Step 4: Start async metadata loading
+            if self.async_manager and self.cloud_metadata_sync:
+                print("DEBUG: Starting async metadata sync...")
+                operation_id = self.cloud_metadata_sync.sync_all_metadata(
+                    progress_callback=self._on_metadata_sync_progress
+                )
+                print(f"DEBUG: Async metadata sync started with operation ID: {operation_id}")
+            else:
+                print("DEBUG: Async manager not available, falling back to batch loading")
+                self._start_batch_metadata_loading(sessions)
+            
+            return sessions
+            
+        except Exception as e:
+            print(f"Error in async cloud session loading: {e}")
+            # Fallback to direct loading
+            return self._load_cloud_sessions_direct()
+    
+    def _start_batch_metadata_loading(self, sessions):
+        """Start batch metadata loading in background thread (fallback method)."""
+        def load_metadata_batch():
+            try:
+                print("DEBUG: Starting batch metadata loading...")
+                batch_size = 5
+                total_sessions = len(sessions)
+                
+                for i in range(0, total_sessions, batch_size):
+                    batch = sessions[i:i + batch_size]
+                    print(f"DEBUG: Loading metadata batch {i//batch_size + 1} ({len(batch)} sessions)")
+                    
+                    for session in batch:
+                        try:
+                            filename = session['filename']
+                            
+                            # Try to load metadata index first
+                            meta_index = self.cloud_sync.load_meta_index_from_cloud(filename)
+                            if meta_index:
+                                metadata = meta_index
+                            else:
+                                # Fallback to loading full session (slower)
+                                session_data = self.cloud_sync.load_session_from_cloud(filename)
+                                metadata = session_data.get('metadata', {}) if session_data else {}
+                            
+                            # Update session with metadata
+                            session.update({
+                                'name': metadata.get('name', ''),
+                                'desc': metadata.get('desc', ''),
+                                'tags': metadata.get('tags', []),
+                                'color': metadata.get('color', ''),
+                                'class': metadata.get('class', ''),
+                                'image_count': metadata.get('image_count', 0),
+                                'thumbnail_collage': metadata.get('thumbnail_collage', None),
+                                '_loading_metadata': False
+                            })
+                            
+                            # Save to cache if available
+                            if self.meta_cache:
+                                self.meta_cache.save_meta_index(filename, metadata)
+                            
+                        except Exception as e:
+                            print(f"Error loading metadata for {session.get('filename', 'unknown')}: {e}")
+                            # Mark as failed to load
+                            session.update({
+                                'desc': 'Error loading metadata',
+                                '_loading_metadata': False
+                            })
+                    
+                    # Update UI after each batch
+                    self.window.after(0, lambda: self._apply_filters('cloud'))
+                    
+                    # Small delay between batches to keep UI responsive
+                    threading.Event().wait(0.1)
+                
+                print("DEBUG: Batch metadata loading completed")
+                
+            except Exception as e:
+                print(f"Error in batch metadata loading: {e}")
+        
+        # Start background thread
+        threading.Thread(target=load_metadata_batch, daemon=True).start()
+    
+    def _on_metadata_sync_progress(self, operation_id, progress, status, result=None, error=None, message=None):
+        """Handle progress updates from async metadata sync."""
+        try:
+            print(f"DEBUG: Metadata sync progress: {progress:.1f}% - {message or status}")
+            
+            if status == 'completed' and result:
+                print(f"DEBUG: Metadata sync completed: {result}")
+                # Reload sessions from updated cache
+                updated_sessions = self._load_cached_cloud_sessions()
+                if updated_sessions:
+                    self.cloud_sessions = updated_sessions
+                    # Update UI in main thread
+                    self.window.after(0, lambda: self._apply_filters('cloud'))
+        
+        except Exception as e:
+            print(f"Error in metadata sync progress callback: {e}")
+    
+    def _smart_cache_sync(self):
+        """Perform smart cache synchronization with user prompts for orphaned entries."""
+        if not self.cloud_sync or not self.meta_cache or not self.cloud_metadata_sync:
+            messagebox.showerror("Error", "Smart cache sync not available. Cloud sync or cache manager not initialized.")
+            return
+        
+        if not self.cloud_sync.cloud_sync_enabled:
+            messagebox.showerror("Error", "Cloud sync is not enabled. Please enable it in settings first.")
+            return
+        
+        # Show progress dialog
+        progress_dialog = self._create_progress_dialog("Smart Cache Synchronization", "Initializing...")
+        
+        # Track orphaned entries for user confirmation
+        orphaned_entries = []
+        orphan_decisions = {}
+        
+        def orphan_callback(filename):
+            """Callback to handle orphaned cache entries."""
+            orphaned_entries.append(filename)
+            # For now, return True to delete (we'll ask user later)
+            return orphan_decisions.get(filename, True)
+        
+        def progress_callback(operation_id, progress, status, result=None, error=None, message=None):
+            """Handle progress updates."""
+            try:
+                # Update progress dialog
+                if progress_dialog:
+                    self._update_progress_dialog(progress_dialog, progress, message or status)
+                
+                if status == 'completed':
+                    # Close progress dialog
+                    if progress_dialog:
+                        self._close_progress_dialog(progress_dialog)
+                    
+                    if result and result.get('success'):
+                        # Show results
+                        self._show_sync_results(result, orphaned_entries)
+                        # Refresh cloud sessions
+                        self._refresh_data('cloud')
+                    else:
+                        error_msg = result.get('error', 'Unknown error') if result else 'Operation failed'
+                        messagebox.showerror("Smart Sync Failed", f"Smart cache synchronization failed:\n{error_msg}")
+                
+                elif status == 'failed':
+                    # Close progress dialog
+                    if progress_dialog:
+                        self._close_progress_dialog(progress_dialog)
+                    messagebox.showerror("Smart Sync Failed", f"Smart cache synchronization failed:\n{error or 'Unknown error'}")
+            
+            except Exception as e:
+                print(f"Error in smart sync progress callback: {e}")
+        
+        # Ask user about orphaned entries before starting
+        if orphaned_entries:
+            self._handle_orphaned_entries(orphaned_entries, orphan_decisions)
+        
+        # Start smart cache sync operation
+        try:
+            operation_id = self.cloud_metadata_sync.smart_cache_sync(
+                orphan_callback=orphan_callback,
+                progress_callback=progress_callback
+            )
+            print(f"Started smart cache sync operation: {operation_id}")
+        except Exception as e:
+            if progress_dialog:
+                self._close_progress_dialog(progress_dialog)
+            messagebox.showerror("Error", f"Failed to start smart cache sync:\n{e}")
+    
+    def _cleanup_cache(self):
+        """Perform cache cleanup and validation."""
+        if not self.meta_cache or not self.cloud_metadata_sync:
+            messagebox.showerror("Error", "Cache cleanup not available. Cache manager not initialized.")
+            return
+        
+        # Confirm with user
+        if not messagebox.askyesno("Confirm Cache Cleanup", 
+                                  "This will validate and clean up corrupted or orphaned cache files.\n\n"
+                                  "Do you want to continue?"):
+            return
+        
+        # Show progress dialog
+        progress_dialog = self._create_progress_dialog("Cache Cleanup", "Starting cleanup...")
+        
+        def progress_callback(operation_id, progress, status, result=None, error=None, message=None):
+            """Handle progress updates."""
+            try:
+                # Update progress dialog
+                if progress_dialog:
+                    self._update_progress_dialog(progress_dialog, progress, message or status)
+                
+                if status == 'completed':
+                    # Close progress dialog
+                    if progress_dialog:
+                        self._close_progress_dialog(progress_dialog)
+                    
+                    if result and result.get('success'):
+                        self._show_cleanup_results(result)
+                        # Refresh cloud sessions
+                        self._refresh_data('cloud')
+                    else:
+                        error_msg = result.get('error', 'Unknown error') if result else 'Operation failed'
+                        messagebox.showerror("Cleanup Failed", f"Cache cleanup failed:\n{error_msg}")
+                
+                elif status == 'failed':
+                    # Close progress dialog
+                    if progress_dialog:
+                        self._close_progress_dialog(progress_dialog)
+                    messagebox.showerror("Cleanup Failed", f"Cache cleanup failed:\n{error or 'Unknown error'}")
+            
+            except Exception as e:
+                print(f"Error in cleanup progress callback: {e}")
+        
+        # Start cache cleanup operation
+        try:
+            operation_id = self.cloud_metadata_sync.cleanup_cache(
+                progress_callback=progress_callback
+            )
+            print(f"Started cache cleanup operation: {operation_id}")
+        except Exception as e:
+            if progress_dialog:
+                self._close_progress_dialog(progress_dialog)
+            messagebox.showerror("Error", f"Failed to start cache cleanup:\n{e}")
+    
+    def _handle_orphaned_entries(self, orphaned_entries, orphan_decisions):
+        """Handle orphaned cache entries with user input."""
+        if not orphaned_entries:
+            return
+        
+        # Create dialog for orphaned entries
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Orphaned Cache Entries Found")
+        dialog.geometry("600x400")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        
+        # Center dialog
+        dialog.geometry("+%d+%d" % (
+            self.window.winfo_rootx() + 50,
+            self.window.winfo_rooty() + 50
+        ))
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Info label
+        info_label = ttk.Label(main_frame, 
+                              text=f"Found {len(orphaned_entries)} cache entries that no longer exist in cloud storage.\n"
+                                   "These entries can be safely deleted to free up space.",
+                              wraplength=550)
+        info_label.pack(pady=(0, 10))
+        
+        # Listbox with orphaned entries
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE)
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        
+        for entry in orphaned_entries:
+            listbox.insert(tk.END, entry)
+        
+        # Select all by default
+        listbox.select_set(0, tk.END)
+        
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        def on_delete_selected():
+            selected_indices = listbox.curselection()
+            for i in selected_indices:
+                filename = orphaned_entries[i]
+                orphan_decisions[filename] = True
+            dialog.destroy()
+        
+        def on_keep_all():
+            for filename in orphaned_entries:
+                orphan_decisions[filename] = False
+            dialog.destroy()
+        
+        def on_select_all():
+            listbox.select_set(0, tk.END)
+        
+        def on_select_none():
+            listbox.select_clear(0, tk.END)
+        
+        ttk.Button(button_frame, text="Select All", command=on_select_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Select None", command=on_select_none).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Delete Selected", command=on_delete_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Keep All", command=on_keep_all).pack(side=tk.RIGHT, padx=5)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+    
+    def _show_sync_results(self, results, orphaned_entries):
+        """Show smart cache sync results."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Smart Cache Sync Results")
+        dialog.geometry("500x400")
+        dialog.transient(self.window)
+        
+        # Center dialog
+        dialog.geometry("+%d+%d" % (
+            self.window.winfo_rootx() + 100,
+            self.window.winfo_rooty() + 100
+        ))
+        
+        # Main frame with scrollbar
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Results text
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, state=tk.DISABLED)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Format results
+        result_text = "Smart Cache Synchronization Results\n"
+        result_text += "=" * 40 + "\n\n"
+        result_text += f"Cloud Sessions: {results.get('cloud_sessions', 0)}\n"
+        result_text += f"Cached Sessions: {results.get('cached_sessions', 0)}\n"
+        result_text += f"Missing Sessions Downloaded: {results.get('missing_sessions', 0)}\n"
+        result_text += f"Orphaned Sessions Found: {results.get('orphaned_sessions', 0)}\n\n"
+        
+        if results.get('downloaded'):
+            result_text += "Downloaded Metadata:\n"
+            for filename in results['downloaded']:
+                result_text += f"  • {filename}\n"
+            result_text += "\n"
+        
+        if results.get('deleted'):
+            result_text += "Deleted Orphaned Entries:\n"
+            for filename in results['deleted']:
+                result_text += f"  • {filename}\n"
+            result_text += "\n"
+        
+        if results.get('errors'):
+            result_text += "Errors:\n"
+            for error in results['errors']:
+                result_text += f"  • {error}\n"
+            result_text += "\n"
+        
+        result_text += f"Cache Valid: {'Yes' if results.get('cache_valid', False) else 'No'}\n"
+        
+        # Insert text
+        text_widget.config(state=tk.NORMAL)
+        text_widget.insert(tk.END, result_text)
+        text_widget.config(state=tk.DISABLED)
+        
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Close button
+        ttk.Button(main_frame, text="Close", command=dialog.destroy).pack(pady=(10, 0))
+    
+    def _show_cleanup_results(self, results):
+        """Show cache cleanup results."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Cache Cleanup Results")
+        dialog.geometry("500x400")
+        dialog.transient(self.window)
+        
+        # Center dialog
+        dialog.geometry("+%d+%d" % (
+            self.window.winfo_rootx() + 100,
+            self.window.winfo_rooty() + 100
+        ))
+        
+        # Main frame with scrollbar
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Results text
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, state=tk.DISABLED)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Format results
+        result_text = "Cache Cleanup Results\n"
+        result_text += "=" * 25 + "\n\n"
+        result_text += f"Total Files Checked: {results.get('total_files_checked', 0)}\n"
+        result_text += f"Corrupted Files Found: {results.get('corrupted_files_found', 0)}\n"
+        result_text += f"Corrupted Files Removed: {results.get('corrupted_files_removed', 0)}\n"
+        result_text += f"Orphaned Files Found: {results.get('orphaned_files_found', 0)}\n"
+        result_text += f"Orphaned Files Removed: {results.get('orphaned_files_removed', 0)}\n\n"
+        
+        # Size information
+        size_before = results.get('cache_size_before', 0)
+        size_after = results.get('cache_size_after', 0)
+        size_saved = size_before - size_after
+        
+        result_text += f"Cache Size Before: {self._format_file_size(size_before)}\n"
+        result_text += f"Cache Size After: {self._format_file_size(size_after)}\n"
+        result_text += f"Space Freed: {self._format_file_size(size_saved)}\n\n"
+        
+        if results.get('errors'):
+            result_text += "Errors:\n"
+            for error in results['errors']:
+                result_text += f"  • {error}\n"
+        
+        # Insert text
+        text_widget.config(state=tk.NORMAL)
+        text_widget.insert(tk.END, result_text)
+        text_widget.config(state=tk.DISABLED)
+        
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Close button
+        ttk.Button(main_frame, text="Close", command=dialog.destroy).pack(pady=(10, 0))
+    
+    def _create_progress_dialog(self, title, initial_message):
+        """Create a progress dialog."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title(title)
+        dialog.geometry("400x150")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        
+        # Center dialog
+        dialog.geometry("+%d+%d" % (
+            self.window.winfo_rootx() + 200,
+            self.window.winfo_rooty() + 200
+        ))
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Progress label
+        progress_label = ttk.Label(main_frame, text=initial_message)
+        progress_label.pack(pady=(0, 10))
+        
+        # Progress bar
+        progress_bar = ttk.Progressbar(main_frame, mode='determinate', length=300)
+        progress_bar.pack(pady=(0, 10))
+        
+        # Store references
+        dialog.progress_label = progress_label
+        dialog.progress_bar = progress_bar
+        
+        return dialog
+    
+    def _update_progress_dialog(self, dialog, progress, message):
+        """Update progress dialog."""
+        try:
+            if dialog:
+                # Handle ProgressDialog class (has update_progress method)
+                if hasattr(dialog, 'update_progress'):
+                    dialog.update_progress(progress, message)
+                # Handle direct tk.Toplevel dialog
+                elif hasattr(dialog, 'winfo_exists'):
+                    try:
+                        if dialog.winfo_exists():
+                            dialog.progress_bar['value'] = progress
+                            dialog.progress_label.config(text=message)
+                            dialog.update()
+                    except tk.TclError:
+                        # Dialog was destroyed
+                        pass
+        except Exception as e:
+            print(f"Error updating progress dialog: {e}")
+    
+    def _close_progress_dialog(self, dialog):
+        """Close progress dialog safely."""
+        try:
+            if dialog:
+                # Handle ProgressDialog class (has dialog attribute)
+                if hasattr(dialog, 'dialog'):
+                    try:
+                        if dialog.dialog.winfo_exists():
+                            dialog.dialog.destroy()
+                    except (tk.TclError, AttributeError):
+                        pass
+                # Handle direct tk.Toplevel dialog
+                elif hasattr(dialog, 'winfo_exists'):
+                    try:
+                        if dialog.winfo_exists():
+                            dialog.destroy()
+                    except tk.TclError:
+                        pass
+        except Exception as e:
+            print(f"Error closing progress dialog: {e}")
+    
+    def _format_file_size(self, size_bytes):
+        """Format file size in human readable format."""
+        if size_bytes == 0:
+            return "0 B"
+        
+        size_names = ["B", "KB", "MB", "GB", "TB"]
+        i = int(math.floor(math.log(size_bytes, 1024)))
+        p = math.pow(1024, i)
+        s = round(size_bytes / p, 2)
+        return f"{s} {size_names[i]}"
+    
+    def _load_cloud_sessions_direct(self):
+        """Load cloud sessions directly from cloud storage (fallback method)."""
+        sessions = []
         
         try:
             cloud_list = self.cloud_sync.list_cloud_sessions()
@@ -477,6 +1120,83 @@ class SessionManagerUI:
         
         print(f"DEBUG: Loaded {len(sessions)} cloud sessions with metadata")
         return sessions
+    
+    def _parse_datetime(self, datetime_str):
+        """Parse datetime string from cache metadata."""
+        if not datetime_str:
+            return datetime.now()
+        
+        try:
+            # Try ISO format first
+            if 'T' in datetime_str:
+                return datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            else:
+                return datetime.fromisoformat(datetime_str)
+        except Exception:
+            # Fallback to current time if parsing fails
+            return datetime.now()
+    
+    def _start_background_sync(self):
+        """Start background synchronization with cloud to update cache."""
+        def sync_in_background():
+            try:
+                print("DEBUG: Starting background sync with cloud...")
+                
+                # Use CloudSyncManager's sync method if available
+                if hasattr(self.cloud_sync, 'sync_metadata_with_cloud'):
+                    sync_result = self.cloud_sync.sync_metadata_with_cloud()
+                    
+                    if sync_result.get('success', False):
+                        print("DEBUG: Background sync completed successfully")
+                        
+                        # Update local cache with cloud data
+                        overall_meta = sync_result.get('overall_meta')
+                        if overall_meta and self.meta_cache:
+                            print(f"DEBUG: Updating local cache with {overall_meta.get('total_sessions', 0)} sessions from cloud")
+                            self.meta_cache.update_cache_from_cloud(overall_meta)
+                            
+                            # Download missing metadata index files
+                            sessions_in_cloud = overall_meta.get('sessions', [])
+                            for session_info in sessions_in_cloud:
+                                filename = session_info.get('filename', '')
+                                if filename:
+                                    # Check if we have the metadata index locally
+                                    if not self.meta_cache.load_meta_index(filename):
+                                        print(f"DEBUG: Downloading missing metadata for {filename}")
+                                        try:
+                                            # Try to load metadata index from cloud
+                                            meta_index = self.cloud_sync.load_meta_index_from_cloud(filename)
+                                            if meta_index:
+                                                # Extract just the metadata part
+                                                metadata = meta_index.get('metadata', {})
+                                                self.meta_cache.save_meta_index(filename, metadata)
+                                                print(f"DEBUG: Saved metadata index for {filename}")
+                                            else:
+                                                print(f"DEBUG: No metadata index found in cloud for {filename}")
+                                        except Exception as e:
+                                            print(f"DEBUG: Failed to download metadata for {filename}: {e}")
+                        
+                        # Reload sessions from updated cache
+                        updated_sessions = self._load_cached_cloud_sessions()
+                        if updated_sessions:
+                            print(f"DEBUG: Loaded {len(updated_sessions)} sessions from updated cache")
+                            self.cloud_sessions = updated_sessions
+                            # Update UI in main thread
+                            self.window.after(0, lambda: self._apply_filters('cloud'))
+                        else:
+                            print("DEBUG: No sessions loaded from updated cache")
+                    else:
+                        print(f"DEBUG: Background sync failed: {sync_result.get('error', 'Unknown error')}")
+                else:
+                    print("DEBUG: CloudSyncManager does not support metadata sync")
+                    
+            except Exception as e:
+                print(f"Error in background sync: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Start background thread
+        threading.Thread(target=sync_in_background, daemon=True).start()
     
     def _extract_session_metadata(self, file_path):
         """Extract metadata from a session file."""
@@ -597,10 +1317,25 @@ class SessionManagerUI:
         start_idx = (self.current_page - 1) * self.items_per_page
         end_idx = min(start_idx + self.items_per_page, total_items)
         
-        # Sort sessions
+        # Sort sessions with safe datetime handling
         if hasattr(self, 'sort_column') and self.sort_column:
             reverse = getattr(self, 'sort_reverse', False)
-            sessions.sort(key=lambda x: x.get(self.sort_column, ''), reverse=reverse)
+            
+            def safe_sort_key(session):
+                value = session.get(self.sort_column, '')
+                
+                # Handle datetime objects specially
+                if isinstance(value, datetime):
+                    # Convert to timestamp for consistent comparison
+                    return value.timestamp()
+                
+                # Handle other types
+                if value is None:
+                    return ''
+                
+                return value
+            
+            sessions.sort(key=safe_sort_key, reverse=reverse)
         
         # Add items to tree
         for session in sessions[start_idx:end_idx]:
@@ -1110,7 +1845,7 @@ class SessionManagerUI:
             popup.geometry(f"{img_width}x{img_height}+{x}+{y}")
             
             # Display image
-            from PIL import ImageTk
+            from PIL import Image, ImageTk
             photo = ImageTk.PhotoImage(thumbnail_image)
             label = tk.Label(popup, image=photo)
             label.image = photo  # Keep a reference
@@ -1220,7 +1955,7 @@ class SessionManagerUI:
             main_frame.pack(fill=tk.BOTH, expand=True)
             
             # Display image
-            from PIL import ImageTk
+            from PIL import Image, ImageTk
             photo = ImageTk.PhotoImage(thumbnail_image)
             label = ttk.Label(main_frame, image=photo)
             label.image = photo  # Keep a reference
@@ -1350,4 +2085,511 @@ class SessionManagerUI:
             
         except Exception as e:
             print(f"Error converting Markdown: {e}")
-            return text  # Return original text if conversion fails 
+            return text  # Return original text if conversion fails     
+
+    # Cache Management Methods
+    
+    def _rebuild_all_indexes(self):
+        """Rebuild all metadata indexes by downloading all sessions and extracting metadata."""
+        if not self.cloud_sync:
+            messagebox.showerror("Error", "Cloud sync not available.")
+            return
+        
+        if not self.meta_cache:
+            messagebox.showerror("Error", "Metadata cache not available.")
+            return
+        
+        # Confirm with user
+        result = messagebox.askyesno(
+            "Rebuild All Indexes",
+            "This will download all cloud sessions to rebuild metadata indexes.\n"
+            "This may take several minutes and use significant bandwidth.\n\n"
+            "Do you want to continue?"
+        )
+        
+        if not result:
+            return
+        
+        # Create progress dialog
+        progress_dialog = self._create_progress_dialog(
+            "Rebuilding All Indexes",
+            "Initializing rebuild operation..."
+        )
+        
+        def rebuild_in_background():
+            try:
+                # Get list of all cloud sessions
+                progress_dialog.update_progress(10, "Getting list of cloud sessions...")
+                cloud_sessions = self.cloud_sync.list_cloud_sessions()
+                total_sessions = len(cloud_sessions)
+                
+                if total_sessions == 0:
+                    self.window.after(0, lambda: progress_dialog.complete("No cloud sessions found."))
+                    return
+                
+                progress_dialog.update_progress(20, f"Found {total_sessions} sessions. Starting rebuild...")
+                
+                # Process sessions in batches
+                processed_count = 0
+                batch_size = 3  # Smaller batches for rebuild to avoid overwhelming
+                
+                for i in range(0, total_sessions, batch_size):
+                    if progress_dialog.cancelled:
+                        break
+                    
+                    batch = cloud_sessions[i:i + batch_size]
+                    batch_progress = 20 + (i / total_sessions) * 70
+                    
+                    progress_dialog.update_progress(
+                        batch_progress,
+                        f"Processing sessions {i+1}-{min(i+batch_size, total_sessions)} of {total_sessions}..."
+                    )
+                    
+                    for session in batch:
+                        if progress_dialog.cancelled:
+                            break
+                        
+                        try:
+                            filename = session['filename']
+                            
+                            # Download full session to extract metadata
+                            session_data = self.cloud_sync.load_session_from_cloud(filename)
+                            if session_data:
+                                metadata = session_data.get('metadata', {})
+                                
+                                # Add file size and creation date
+                                metadata['file_size'] = session.get('size', 0)
+                                metadata['created_at'] = session.get('last_modified', datetime.now()).isoformat()
+                                
+                                # Save metadata index to cache
+                                self.meta_cache.save_meta_index(filename, metadata)
+                                
+                                # Also save to cloud if not exists
+                                try:
+                                    self.cloud_sync.save_meta_index_to_cloud(filename, metadata)
+                                except Exception as e:
+                                    print(f"Warning: Could not save meta index to cloud for {filename}: {e}")
+                                
+                                processed_count += 1
+                            
+                        except Exception as e:
+                            print(f"Error processing session {session.get('filename', 'unknown')}: {e}")
+                            continue
+                
+                if progress_dialog.cancelled:
+                    self.window.after(0, lambda: progress_dialog.complete("Rebuild cancelled by user."))
+                    return
+                
+                # Update overall metadata file
+                progress_dialog.update_progress(90, "Updating overall metadata file...")
+                try:
+                    self.cloud_sync.update_overall_meta_file()
+                except Exception as e:
+                    print(f"Warning: Could not update overall meta file: {e}")
+                
+                # Complete
+                progress_dialog.update_progress(100, "Rebuild completed successfully!")
+                
+                # Refresh UI data
+                self.window.after(0, lambda: self._load_data())
+                
+                self.window.after(0, lambda: progress_dialog.complete(
+                    f"Successfully rebuilt {processed_count} metadata indexes."
+                ))
+                
+            except Exception as e:
+                error_msg = f"Rebuild failed: {str(e)}"
+                print(f"Error in rebuild all indexes: {e}")
+                self.window.after(0, lambda: progress_dialog.error(error_msg))
+        
+        # Start background thread
+        threading.Thread(target=rebuild_in_background, daemon=True).start()
+    
+    def _rebuild_overall_list(self):
+        """Rebuild overall metadata list by downloading all existing metadata indexes."""
+        if not self.cloud_sync:
+            messagebox.showerror("Error", "Cloud sync not available.")
+            return
+        
+        if not self.meta_cache:
+            messagebox.showerror("Error", "Metadata cache not available.")
+            return
+        
+        # Confirm with user
+        result = messagebox.askyesno(
+            "Rebuild Overall List",
+            "This will download all existing metadata indexes and rebuild the master list.\n"
+            "This is faster than rebuilding all indexes but requires existing metadata files.\n\n"
+            "Do you want to continue?"
+        )
+        
+        if not result:
+            return
+        
+        # Create progress dialog
+        progress_dialog = self._create_progress_dialog(
+            "Rebuilding Overall List",
+            "Initializing rebuild operation..."
+        )
+        
+        def rebuild_overall_in_background():
+            try:
+                # Get list of metadata indexes in cloud
+                progress_dialog.update_progress(10, "Getting list of metadata indexes...")
+                meta_indexes = self.cloud_sync.list_meta_indexes_in_cloud()
+                total_indexes = len(meta_indexes)
+                
+                if total_indexes == 0:
+                    self.window.after(0, lambda: progress_dialog.complete("No metadata indexes found in cloud."))
+                    return
+                
+                progress_dialog.update_progress(20, f"Found {total_indexes} metadata indexes. Downloading...")
+                
+                # Download all metadata indexes
+                processed_count = 0
+                batch_size = 10  # Larger batches for metadata files (they're smaller)
+                
+                for i in range(0, total_indexes, batch_size):
+                    if progress_dialog.cancelled:
+                        break
+                    
+                    batch = meta_indexes[i:i + batch_size]
+                    batch_progress = 20 + (i / total_indexes) * 60
+                    
+                    progress_dialog.update_progress(
+                        batch_progress,
+                        f"Downloading metadata {i+1}-{min(i+batch_size, total_indexes)} of {total_indexes}..."
+                    )
+                    
+                    for meta_filename in batch:
+                        if progress_dialog.cancelled:
+                            break
+                        
+                        try:
+                            # Extract session filename from metadata filename
+                            session_filename = meta_filename.replace('.meta.json', '.fastshot')
+                            
+                            # Download metadata index
+                            meta_data = self.cloud_sync.load_meta_index_from_cloud(session_filename)
+                            if meta_data:
+                                # Save to local cache
+                                self.meta_cache.save_meta_index(session_filename, meta_data)
+                                processed_count += 1
+                            
+                        except Exception as e:
+                            print(f"Error downloading metadata {meta_filename}: {e}")
+                            continue
+                
+                if progress_dialog.cancelled:
+                    self.window.after(0, lambda: progress_dialog.complete("Rebuild cancelled by user."))
+                    return
+                
+                # Update overall metadata file
+                progress_dialog.update_progress(80, "Updating overall metadata file...")
+                try:
+                    self.cloud_sync.update_overall_meta_file()
+                    
+                    # Load and update local cache
+                    overall_meta = self.cloud_sync.load_overall_meta_file()
+                    if overall_meta:
+                        self.meta_cache.update_cache_from_cloud(overall_meta)
+                    
+                except Exception as e:
+                    print(f"Warning: Could not update overall meta file: {e}")
+                
+                # Complete
+                progress_dialog.update_progress(100, "Rebuild completed successfully!")
+                
+                # Refresh UI data
+                self.window.after(0, lambda: self._load_data())
+                
+                self.window.after(0, lambda: progress_dialog.complete(
+                    f"Successfully rebuilt overall list with {processed_count} metadata indexes."
+                ))
+                
+            except Exception as e:
+                error_msg = f"Rebuild failed: {str(e)}"
+                print(f"Error in rebuild overall list: {e}")
+                self.window.after(0, lambda: progress_dialog.error(error_msg))
+        
+        # Start background thread
+        threading.Thread(target=rebuild_overall_in_background, daemon=True).start()
+    
+    def _show_cache_status(self):
+        """Show cache status dialog with size, last updated, and integrity information."""
+        if not self.meta_cache:
+            messagebox.showerror("Error", "Metadata cache not available.")
+            return
+        
+        try:
+            # Get cache statistics
+            cache_stats = self.meta_cache.get_cache_stats()
+            
+            # Create status dialog
+            status_dialog = tk.Toplevel(self.window)
+            status_dialog.title("Cache Status")
+            status_dialog.geometry("600x500")
+            status_dialog.transient(self.window)
+            status_dialog.grab_set()
+            
+            # Center dialog
+            status_dialog.update_idletasks()
+            x = (status_dialog.winfo_screenwidth() // 2) - (600 // 2)
+            y = (status_dialog.winfo_screenheight() // 2) - (500 // 2)
+            status_dialog.geometry(f"600x500+{x}+{y}")
+            
+            # Main frame
+            main_frame = ttk.Frame(status_dialog, padding="20")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Title
+            title_label = ttk.Label(main_frame, text="Cache Status", font=("Arial", 14, "bold"))
+            title_label.pack(pady=(0, 20))
+            
+            # Create notebook for different sections
+            notebook = ttk.Notebook(main_frame)
+            notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+            
+            # General Status Tab
+            general_frame = ttk.Frame(notebook, padding="10")
+            notebook.add(general_frame, text="General")
+            
+            # Cache size
+            cache_size_mb = cache_stats.get('cache_size_bytes', 0) / (1024 * 1024)
+            ttk.Label(general_frame, text=f"Cache Size: {cache_size_mb:.2f} MB", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # File counts
+            total_files = cache_stats.get('total_meta_files', 0)
+            actual_files = cache_stats.get('actual_meta_files', 0)
+            ttk.Label(general_frame, text=f"Metadata Files: {actual_files} (expected: {total_files})", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Last sync
+            last_sync = cache_stats.get('last_sync')
+            if last_sync:
+                try:
+                    sync_time = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+                    sync_str = sync_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+                except:
+                    sync_str = last_sync
+            else:
+                sync_str = "Never"
+            ttk.Label(general_frame, text=f"Last Sync: {sync_str}", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Integrity Status Tab
+            integrity_frame = ttk.Frame(notebook, padding="10")
+            notebook.add(integrity_frame, text="Integrity")
+            
+            integrity_info = cache_stats.get('integrity_check', {})
+            status = integrity_info.get('status', 'unknown')
+            
+            # Status with color
+            status_color = "green" if status == "valid" else "red" if status == "corrupted" else "orange"
+            status_label = ttk.Label(integrity_frame, text=f"Status: {status.upper()}", font=("Arial", 10, "bold"))
+            status_label.pack(anchor=tk.W, pady=2)
+            
+            # Last validated
+            last_validated = integrity_info.get('last_validated')
+            if last_validated:
+                try:
+                    validated_time = datetime.fromisoformat(last_validated.replace('Z', '+00:00'))
+                    validated_str = validated_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+                except:
+                    validated_str = last_validated
+            else:
+                validated_str = "Never"
+            ttk.Label(integrity_frame, text=f"Last Validated: {validated_str}", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Corrupted files
+            corrupted_files = integrity_info.get('corrupted_files', [])
+            if corrupted_files:
+                ttk.Label(integrity_frame, text=f"Corrupted Files: {len(corrupted_files)}", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+                
+                # List corrupted files
+                corrupted_frame = ttk.LabelFrame(integrity_frame, text="Corrupted Files", padding="5")
+                corrupted_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+                
+                corrupted_text = tk.Text(corrupted_frame, height=8, width=60)
+                corrupted_scrollbar = ttk.Scrollbar(corrupted_frame, orient="vertical", command=corrupted_text.yview)
+                corrupted_text.configure(yscrollcommand=corrupted_scrollbar.set)
+                
+                for file in corrupted_files:
+                    corrupted_text.insert(tk.END, f"• {file}\n")
+                
+                corrupted_text.config(state=tk.DISABLED)
+                corrupted_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                corrupted_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            else:
+                ttk.Label(integrity_frame, text="No corrupted files found", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Paths Tab (for debugging)
+            paths_frame = ttk.Frame(notebook, padding="10")
+            notebook.add(paths_frame, text="Paths")
+            
+            cache_paths = cache_stats.get('cache_paths', {})
+            for path_name, path_value in cache_paths.items():
+                ttk.Label(paths_frame, text=f"{path_name.replace('_', ' ').title()}:", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(5, 0))
+                path_label = ttk.Label(paths_frame, text=path_value, font=("Arial", 8), foreground="gray")
+                path_label.pack(anchor=tk.W, padx=(10, 0), pady=(0, 5))
+            
+            # Button frame
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X)
+            
+            # Action buttons
+            ttk.Button(button_frame, text="Validate Cache", command=lambda: self._validate_cache_integrity(status_dialog)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Clear Cache", command=lambda: self._clear_cache_confirm(status_dialog)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Refresh", command=lambda: self._refresh_cache_status(status_dialog)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Close", command=status_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            print(f"Error showing cache status: {e}")
+            messagebox.showerror("Error", f"Failed to show cache status: {e}")
+    
+    def _validate_cache_integrity(self, parent_dialog):
+        """Validate cache integrity and update status."""
+        if not self.meta_cache:
+            return
+        
+        def validate_in_background():
+            try:
+                # Show progress
+                parent_dialog.after(0, lambda: messagebox.showinfo("Validation", "Validating cache integrity..."))
+                
+                # Perform validation
+                is_valid = self.meta_cache.validate_cache_integrity()
+                
+                # Show result
+                if is_valid:
+                    parent_dialog.after(0, lambda: messagebox.showinfo("Validation Complete", "Cache integrity validation passed. All files are valid."))
+                else:
+                    parent_dialog.after(0, lambda: messagebox.showwarning("Validation Complete", "Cache integrity validation found corrupted files. Check the integrity tab for details."))
+                
+                # Refresh status dialog
+                parent_dialog.after(0, lambda: self._refresh_cache_status(parent_dialog))
+                
+            except Exception as e:
+                parent_dialog.after(0, lambda: messagebox.showerror("Validation Error", f"Failed to validate cache: {e}"))
+        
+        threading.Thread(target=validate_in_background, daemon=True).start()
+    
+    def _clear_cache_confirm(self, parent_dialog):
+        """Confirm and clear cache."""
+        result = messagebox.askyesno(
+            "Clear Cache",
+            "This will delete all cached metadata files.\n"
+            "You will need to rebuild the cache to restore fast loading.\n\n"
+            "Are you sure you want to continue?",
+            parent=parent_dialog
+        )
+        
+        if result and self.meta_cache:
+            try:
+                self.meta_cache.clear_cache()
+                messagebox.showinfo("Cache Cleared", "Cache has been cleared successfully.", parent=parent_dialog)
+                
+                # Refresh status dialog and main UI
+                self._refresh_cache_status(parent_dialog)
+                self._load_data()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to clear cache: {e}", parent=parent_dialog)
+    
+    def _refresh_cache_status(self, status_dialog):
+        """Refresh the cache status dialog."""
+        # Close current dialog and reopen
+        status_dialog.destroy()
+        self._show_cache_status()
+    
+    def _create_progress_dialog(self, title, initial_message):
+        """Create a progress dialog for long-running operations."""
+        return ProgressDialog(self.window, title, initial_message)
+
+
+class ProgressDialog:
+    """Progress dialog for long-running operations with cancellation support."""
+    
+    def __init__(self, parent, title, initial_message):
+        self.cancelled = False
+        
+        # Create dialog
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("500x200")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        self.dialog.resizable(False, False)
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (200 // 2)
+        self.dialog.geometry(f"500x200+{x}+{y}")
+        
+        # Main frame
+        main_frame = ttk.Frame(self.dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        self.title_label = ttk.Label(main_frame, text=title, font=("Arial", 12, "bold"))
+        self.title_label.pack(pady=(0, 20))
+        
+        # Progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=(0, 10))
+        
+        # Status message
+        self.status_label = ttk.Label(main_frame, text=initial_message, wraplength=450)
+        self.status_label.pack(pady=(0, 20))
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        # Cancel button
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self._cancel)
+        self.cancel_button.pack(side=tk.RIGHT)
+        
+        # Handle window close
+        self.dialog.protocol("WM_DELETE_WINDOW", self._cancel)
+    
+    def update_progress(self, progress, message):
+        """Update progress and message."""
+        def update():
+            if not self.cancelled:
+                self.progress_var.set(progress)
+                self.status_label.config(text=message)
+                self.dialog.update()
+        
+        if self.dialog.winfo_exists():
+            self.dialog.after(0, update)
+    
+    def complete(self, message):
+        """Complete the operation with success message."""
+        def complete_update():
+            self.progress_var.set(100)
+            self.status_label.config(text=message)
+            self.cancel_button.config(text="Close")
+            self.dialog.update()
+            
+            # Auto-close after 3 seconds
+            self.dialog.after(3000, self.dialog.destroy)
+        
+        if self.dialog.winfo_exists():
+            self.dialog.after(0, complete_update)
+    
+    def error(self, message):
+        """Complete the operation with error message."""
+        def error_update():
+            self.status_label.config(text=f"Error: {message}")
+            self.cancel_button.config(text="Close")
+            self.dialog.update()
+        
+        if self.dialog.winfo_exists():
+            self.dialog.after(0, error_update)
+    
+    def _cancel(self):
+        """Cancel the operation."""
+        self.cancelled = True
+        if self.dialog.winfo_exists():
+            self.dialog.destroy()

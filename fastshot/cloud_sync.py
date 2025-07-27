@@ -276,11 +276,16 @@ class CloudSyncManager:
             print(f"Error extracting data from image: {e}")
             return disguised_data
     
-    def save_session_to_cloud(self, session_data, metadata):
-        """Save session to cloud with encryption and image disguise."""
+    def save_session_to_cloud(self, session_data, metadata, progress_callback=None):
+        """Save session to cloud with encryption, metadata creation, and rollback mechanism."""
+        saved_files = []  # Track files for rollback
+        
         try:
             if not self.cloud_sync_enabled or not self._init_s3_client():
                 return False
+            
+            if progress_callback:
+                progress_callback(0, "Initializing save operation...")
             
             # Generate filename with metadata
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -295,6 +300,9 @@ class CloudSyncManager:
                 safe_desc = safe_desc.replace(' ', '_') if safe_desc else 'session'
                 filename = f"{timestamp}_{safe_desc}.fastshot"
             
+            if progress_callback:
+                progress_callback(10, "Creating thumbnail collage...")
+            
             # Create thumbnail collage for cloud storage
             from .session_manager import SessionManager
             temp_manager = SessionManager(self)  # Pass self as app for cloud context
@@ -303,21 +311,27 @@ class CloudSyncManager:
             if thumbnail_collage:
                 thumbnail_data = temp_manager.serialize_image(thumbnail_collage)
             
-                            # Prepare session data with enhanced metadata
-                full_session_data = {
-                    'session': session_data,
-                    'metadata': {
-                        'name': metadata.get('name', ''),
-                        'desc': metadata.get('desc', ''),
-                        'tags': metadata.get('tags', []),
-                        'color': metadata.get('color', 'blue'),
-                        'class': metadata.get('class', ''),
-                        'created_at': datetime.now().isoformat(),
-                        'filename': filename,
-                        'image_count': len(session_data.get('windows', [])),
-                        'thumbnail_collage': thumbnail_data
-                    }
+            if progress_callback:
+                progress_callback(20, "Preparing session data...")
+            
+            # Prepare session data with enhanced metadata
+            full_session_data = {
+                'session': session_data,
+                'metadata': {
+                    'name': metadata.get('name', ''),
+                    'desc': metadata.get('desc', ''),
+                    'tags': metadata.get('tags', []),
+                    'color': metadata.get('color', 'blue'),
+                    'class': metadata.get('class', ''),
+                    'created_at': datetime.now().isoformat(),
+                    'filename': filename,
+                    'image_count': len(session_data.get('windows', [])),
+                    'thumbnail_collage': thumbnail_data
                 }
+            }
+            
+            if progress_callback:
+                progress_callback(30, "Encrypting session data...")
             
             # Convert to JSON
             json_data = json.dumps(full_session_data, indent=2, ensure_ascii=False).encode('utf-8')
@@ -328,7 +342,10 @@ class CloudSyncManager:
             # Disguise in image
             disguised_data = self._disguise_in_image(encrypted_data)
             
-            # Upload to S3
+            if progress_callback:
+                progress_callback(50, "Uploading session file...")
+            
+            # Upload main session file to S3
             s3_key = f"sessions/{filename}"
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
@@ -336,18 +353,89 @@ class CloudSyncManager:
                 Body=disguised_data,
                 ContentType='image/png'
             )
+            saved_files.append(s3_key)
+            
+            if progress_callback:
+                progress_callback(70, "Creating metadata index...")
+            
+            # Create and save metadata index file atomically
+            metadata_with_size = metadata.copy()
+            metadata_with_size['file_size'] = len(disguised_data)
+            metadata_with_size['image_count'] = len(session_data.get('windows', []))
+            metadata_with_size['created_at'] = full_session_data['metadata']['created_at']
+            
+            if not self.save_meta_index_to_cloud(filename, metadata_with_size):
+                raise Exception(f"Failed to save metadata index for {filename}")
+            
+            # Track metadata index file for rollback
+            base_name = filename.replace('.fastshot', '')
+            meta_filename = f"{base_name}.meta.json"
+            meta_s3_key = f"meta_indexes/{meta_filename}"
+            saved_files.append(meta_s3_key)
+            
+            if progress_callback:
+                progress_callback(85, "Updating overall metadata...")
+            
+            # Update overall metadata file atomically
+            if not self.update_overall_meta_file():
+                raise Exception(f"Failed to update overall metadata file after saving {filename}")
+            
+            saved_files.append("overall_meta.json")
+            
+            if progress_callback:
+                progress_callback(95, "Saving local copy...")
             
             # Also save locally
             local_path = self.local_sessions_dir / filename
             with open(local_path, 'wb') as f:
                 f.write(disguised_data)
             
+            if progress_callback:
+                progress_callback(100, "Save completed successfully")
+            
             print(f"Session saved to cloud: {s3_key}")
             return filename
             
         except Exception as e:
             print(f"Error saving session to cloud: {e}")
+            
+            if progress_callback:
+                progress_callback(-1, f"Save failed: {str(e)}")
+            
+            # Rollback mechanism - delete any files that were uploaded
+            self._rollback_save_operation(saved_files, filename if 'filename' in locals() else None)
+            
             return False
+    
+    def _rollback_save_operation(self, saved_files, filename):
+        """Rollback save operation by deleting uploaded files."""
+        try:
+            if not self.s3_client or not saved_files:
+                return
+            
+            print(f"Rolling back save operation for {filename}, deleting {len(saved_files)} files...")
+            
+            for s3_key in saved_files:
+                try:
+                    self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+                    print(f"Rolled back: deleted {s3_key}")
+                except Exception as delete_error:
+                    print(f"Warning: Could not delete {s3_key} during rollback: {delete_error}")
+            
+            # Also delete local file if it was created
+            if filename:
+                local_path = self.local_sessions_dir / filename
+                if local_path.exists():
+                    try:
+                        local_path.unlink()
+                        print(f"Rolled back: deleted local file {filename}")
+                    except Exception as local_error:
+                        print(f"Warning: Could not delete local file during rollback: {local_error}")
+            
+            print("Rollback completed")
+            
+        except Exception as e:
+            print(f"Error during rollback: {e}")
     
     def load_session_from_cloud(self, filename):
         """Load session from cloud with decryption."""
@@ -485,8 +573,24 @@ class CloudSyncManager:
             if not self.cloud_sync_enabled or not self._init_s3_client():
                 return False
             
+            # Delete main session file
             s3_key = f"sessions/{filename}"
             self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            
+            # Delete corresponding metadata index file
+            base_name = filename.replace('.fastshot', '')
+            meta_filename = f"{base_name}.meta.json"
+            meta_s3_key = f"meta_indexes/{meta_filename}"
+            
+            try:
+                self.s3_client.delete_object(Bucket=self.bucket_name, Key=meta_s3_key)
+                print(f"Deleted metadata index: {meta_s3_key}")
+            except Exception as meta_error:
+                print(f"Warning: Could not delete metadata index {meta_s3_key}: {meta_error}")
+            
+            # Update overall metadata file
+            if not self.update_overall_meta_file():
+                print(f"Warning: Failed to update overall metadata file after deleting {filename}")
             
             print(f"Deleted from cloud: {filename}")
             return True
@@ -509,6 +613,567 @@ class CloudSyncManager:
             print(f"Error deleting local file: {e}")
             return False
     
+    def save_meta_index_to_cloud(self, filename, metadata):
+        """Save metadata index file to cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return False
+            
+            # Create metadata index structure
+            meta_index = {
+                "version": "1.0",
+                "filename": filename,
+                "metadata": {
+                    "name": metadata.get('name', ''),
+                    "desc": metadata.get('desc', ''),
+                    "tags": metadata.get('tags', []),
+                    "color": metadata.get('color', 'blue'),
+                    "class": metadata.get('class', ''),
+                    "image_count": metadata.get('image_count', 0),
+                    "created_at": metadata.get('created_at', datetime.now().isoformat()),
+                    "file_size": metadata.get('file_size', 0)
+                },
+                "checksum": self._calculate_checksum(json.dumps(metadata, sort_keys=True)),
+                "created_at": datetime.now().isoformat(),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            # Convert to JSON
+            json_data = json.dumps(meta_index, indent=2, ensure_ascii=False).encode('utf-8')
+            
+            # Generate meta index filename
+            base_name = filename.replace('.fastshot', '')
+            meta_filename = f"{base_name}.meta.json"
+            
+            # Upload to S3 in meta_indexes folder
+            s3_key = f"meta_indexes/{meta_filename}"
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=json_data,
+                ContentType='application/json'
+            )
+            
+            print(f"Metadata index saved to cloud: {s3_key}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving metadata index to cloud: {e}")
+            return False
+    
+    def load_meta_index_from_cloud(self, filename):
+        """Load metadata index file from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            # Generate meta index filename
+            base_name = filename.replace('.fastshot', '')
+            meta_filename = f"{base_name}.meta.json"
+            s3_key = f"meta_indexes/{meta_filename}"
+            
+            # Download from S3
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            json_data = response['Body'].read()
+            
+            # Parse JSON
+            meta_index = json.loads(json_data.decode('utf-8'))
+            
+            return meta_index
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print(f"Metadata index not found: {filename}")
+                return None
+            else:
+                print(f"Error loading metadata index from cloud: {e}")
+                return None
+        except Exception as e:
+            print(f"Error loading metadata index from cloud: {e}")
+            return None
+    
+    def update_overall_meta_file(self):
+        """Update the overall metadata file with current session list."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return False
+            
+            # List all sessions in cloud
+            cloud_sessions = self.list_cloud_sessions()
+            
+            # Create overall metadata structure
+            overall_meta = {
+                "version": "1.0",
+                "last_updated": datetime.now().isoformat(),
+                "total_sessions": len(cloud_sessions),
+                "sessions": []
+            }
+            
+            # Add session information
+            for session in cloud_sessions:
+                session_info = {
+                    "filename": session['filename'],
+                    "created_at": session['last_modified'].isoformat() if hasattr(session['last_modified'], 'isoformat') else str(session['last_modified']),
+                    "file_size": session['size'],
+                    "checksum": self._calculate_file_checksum_from_cloud(session['filename'])
+                }
+                overall_meta['sessions'].append(session_info)
+            
+            # Calculate overall checksum
+            overall_meta['checksum'] = self._calculate_checksum(json.dumps(overall_meta['sessions'], sort_keys=True))
+            
+            # Convert to JSON
+            json_data = json.dumps(overall_meta, indent=2, ensure_ascii=False).encode('utf-8')
+            
+            # Upload to S3
+            s3_key = "overall_meta.json"
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=json_data,
+                ContentType='application/json'
+            )
+            
+            print(f"Overall metadata file updated with {len(cloud_sessions)} sessions")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating overall metadata file: {e}")
+            return False
+    
+    def load_overall_meta_file(self):
+        """Load the overall metadata file from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            s3_key = "overall_meta.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            json_data = response['Body'].read()
+            
+            # Parse JSON
+            overall_meta = json.loads(json_data.decode('utf-8'))
+            
+            print(f"Loaded overall metadata file with {overall_meta.get('total_sessions', 0)} sessions")
+            return overall_meta
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print("Overall metadata file not found in cloud")
+                return None
+            else:
+                print(f"Error loading overall metadata file from cloud: {e}")
+                return None
+        except Exception as e:
+            print(f"Error loading overall metadata file from cloud: {e}")
+            return None
+    
+    def sync_metadata_with_cloud(self):
+        """Synchronize metadata using filename-based comparison for immutable sessions."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return {"success": False, "error": "Cloud sync not available"}
+            
+            # Load overall metadata file from cloud
+            overall_meta = self.load_overall_meta_file()
+            if not overall_meta:
+                return {"success": False, "error": "Could not load overall metadata file"}
+            
+            # Get cloud session filenames from overall metadata
+            cloud_filenames = set(session['filename'] for session in overall_meta.get('sessions', []))
+            
+            sync_result = {
+                "success": True,
+                "cloud_filenames": list(cloud_filenames),
+                "overall_meta": overall_meta,
+                "last_updated": overall_meta.get('last_updated'),
+                "total_sessions": overall_meta.get('total_sessions', 0)
+            }
+            
+            return sync_result
+            
+        except Exception as e:
+            print(f"Error synchronizing metadata with cloud: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def load_overall_meta_file(self):
+        """Load the overall metadata file from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            s3_key = "overall_meta.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            json_data = response['Body'].read()
+            
+            # Parse JSON
+            overall_meta = json.loads(json_data.decode('utf-8'))
+            
+            return overall_meta
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print(f"Overall metadata file not found in cloud")
+                return None
+            else:
+                print(f"Error loading overall metadata from cloud: {e}")
+                return None
+        except Exception as e:
+            print(f"Error loading overall metadata from cloud: {e}")
+            return None
+    
+    def rebuild_all_meta_indexes(self, progress_callback=None):
+        """Rebuild all metadata indexes by downloading and processing all sessions."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return {"success": False, "error": "Cloud sync not available"}
+            
+            if progress_callback:
+                progress_callback(0, "Starting metadata index rebuild...")
+            
+            # Get list of all cloud sessions
+            cloud_sessions = self.list_cloud_sessions()
+            total_sessions = len(cloud_sessions)
+            
+            if total_sessions == 0:
+                return {"success": True, "message": "No cloud sessions found", "rebuilt_count": 0}
+            
+            rebuilt_count = 0
+            errors = []
+            
+            for i, session in enumerate(cloud_sessions):
+                try:
+                    filename = session['filename']
+                    progress = (i / total_sessions) * 90
+                    
+                    if progress_callback:
+                        progress_callback(progress, f"Processing {filename} ({i+1}/{total_sessions})...")
+                    
+                    # Load full session to extract metadata
+                    session_data = self.load_session_from_cloud(filename)
+                    if session_data and 'metadata' in session_data:
+                        metadata = session_data['metadata']
+                        
+                        # Ensure required fields
+                        metadata.setdefault('file_size', session.get('size', 0))
+                        metadata.setdefault('created_at', session.get('last_modified', datetime.now()).isoformat())
+                        
+                        # Save metadata index to cloud
+                        if self.save_meta_index_to_cloud(filename, metadata):
+                            rebuilt_count += 1
+                        else:
+                            errors.append(f"Failed to save metadata index for {filename}")
+                    else:
+                        # Create basic metadata if session data is incomplete
+                        basic_metadata = {
+                            'name': filename.replace('.fastshot', ''),
+                            'desc': 'Rebuilt metadata',
+                            'tags': [],
+                            'color': 'blue',
+                            'class': '',
+                            'image_count': 0,
+                            'file_size': session.get('size', 0),
+                            'created_at': session.get('last_modified', datetime.now()).isoformat(),
+                            'thumbnail_collage': None
+                        }
+                        
+                        if self.save_meta_index_to_cloud(filename, basic_metadata):
+                            rebuilt_count += 1
+                        else:
+                            errors.append(f"Failed to save basic metadata index for {filename}")
+                
+                except Exception as e:
+                    error_msg = f"Error processing {filename}: {e}"
+                    print(error_msg)
+                    errors.append(error_msg)
+            
+            # Update overall metadata file
+            if progress_callback:
+                progress_callback(90, "Updating overall metadata file...")
+            
+            if not self.update_overall_meta_file():
+                errors.append("Failed to update overall metadata file")
+            
+            if progress_callback:
+                progress_callback(100, "Metadata index rebuild completed")
+            
+            result = {
+                "success": True,
+                "rebuilt_count": rebuilt_count,
+                "total_sessions": total_sessions,
+                "errors": errors
+            }
+            
+            print(f"Metadata index rebuild completed: {rebuilt_count}/{total_sessions} successful")
+            return result
+            
+        except Exception as e:
+            error_msg = f"Error during metadata index rebuild: {e}"
+            print(error_msg)
+            return {"success": False, "error": error_msg}
+    
+    def verify_cloud_integrity(self, progress_callback=None):
+        """Verify integrity of cloud storage structure and metadata."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return {"success": False, "error": "Cloud sync not available"}
+            
+            if progress_callback:
+                progress_callback(0, "Starting cloud integrity verification...")
+            
+            integrity_results = {
+                "success": True,
+                "sessions_checked": 0,
+                "metadata_indexes_checked": 0,
+                "missing_metadata_indexes": [],
+                "corrupted_sessions": [],
+                "orphaned_metadata": [],
+                "overall_meta_valid": False,
+                "errors": []
+            }
+            
+            # Check overall metadata file
+            if progress_callback:
+                progress_callback(10, "Checking overall metadata file...")
+            
+            overall_meta = self.load_overall_meta_file()
+            if overall_meta:
+                integrity_results["overall_meta_valid"] = True
+                expected_sessions = set(s.get('filename', '') for s in overall_meta.get('sessions', []))
+            else:
+                integrity_results["errors"].append("Overall metadata file missing or corrupted")
+                expected_sessions = set()
+            
+            # List actual sessions in cloud
+            if progress_callback:
+                progress_callback(20, "Listing cloud sessions...")
+            
+            cloud_sessions = self.list_cloud_sessions()
+            actual_sessions = set(s['filename'] for s in cloud_sessions)
+            integrity_results["sessions_checked"] = len(actual_sessions)
+            
+            # List metadata indexes
+            if progress_callback:
+                progress_callback(30, "Listing metadata indexes...")
+            
+            try:
+                response = self.s3_client.list_objects_v2(
+                    Bucket=self.bucket_name,
+                    Prefix='meta_indexes/'
+                )
+                
+                metadata_indexes = set()
+                for obj in response.get('Contents', []):
+                    meta_filename = obj['Key'].replace('meta_indexes/', '')
+                    if meta_filename.endswith('.meta.json'):
+                        # Convert back to session filename
+                        base_name = meta_filename.replace('.meta.json', '')
+                        session_filename = f"{base_name}.fastshot"
+                        metadata_indexes.add(session_filename)
+                
+                integrity_results["metadata_indexes_checked"] = len(metadata_indexes)
+                
+            except Exception as e:
+                integrity_results["errors"].append(f"Error listing metadata indexes: {e}")
+                metadata_indexes = set()
+            
+            # Find missing metadata indexes
+            missing_metadata = actual_sessions - metadata_indexes
+            integrity_results["missing_metadata_indexes"] = list(missing_metadata)
+            
+            # Find orphaned metadata indexes
+            orphaned_metadata = metadata_indexes - actual_sessions
+            integrity_results["orphaned_metadata"] = list(orphaned_metadata)
+            
+            # Verify session integrity (sample check)
+            if progress_callback:
+                progress_callback(50, "Verifying session integrity...")
+            
+            sample_sessions = list(actual_sessions)[:min(5, len(actual_sessions))]  # Check up to 5 sessions
+            for i, filename in enumerate(sample_sessions):
+                try:
+                    progress = 50 + (i / len(sample_sessions)) * 30
+                    if progress_callback:
+                        progress_callback(progress, f"Checking session {filename}...")
+                    
+                    session_data = self.load_session_from_cloud(filename)
+                    if not session_data:
+                        integrity_results["corrupted_sessions"].append(filename)
+                
+                except Exception as e:
+                    integrity_results["corrupted_sessions"].append(filename)
+                    integrity_results["errors"].append(f"Error checking {filename}: {e}")
+            
+            if progress_callback:
+                progress_callback(100, "Cloud integrity verification completed")
+            
+            print(f"Cloud integrity check: {len(missing_metadata)} missing metadata, "
+                  f"{len(orphaned_metadata)} orphaned metadata, "
+                  f"{len(integrity_results['corrupted_sessions'])} corrupted sessions")
+            
+            return integrity_results
+            
+        except Exception as e:
+            error_msg = f"Error during cloud integrity verification: {e}"
+            print(error_msg)
+            return {"success": False, "error": error_msg}
+    
+    def repair_cloud_structure(self, integrity_results, progress_callback=None):
+        """Repair cloud storage structure based on integrity check results."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return {"success": False, "error": "Cloud sync not available"}
+            
+            if progress_callback:
+                progress_callback(0, "Starting cloud structure repair...")
+            
+            repair_results = {
+                "success": True,
+                "metadata_created": 0,
+                "metadata_deleted": 0,
+                "overall_meta_updated": False,
+                "errors": []
+            }
+            
+            # Create missing metadata indexes
+            missing_metadata = integrity_results.get("missing_metadata_indexes", [])
+            if missing_metadata:
+                if progress_callback:
+                    progress_callback(10, f"Creating {len(missing_metadata)} missing metadata indexes...")
+                
+                for i, filename in enumerate(missing_metadata):
+                    try:
+                        progress = 10 + (i / len(missing_metadata)) * 40
+                        if progress_callback:
+                            progress_callback(progress, f"Creating metadata for {filename}...")
+                        
+                        # Load session to extract metadata
+                        session_data = self.load_session_from_cloud(filename)
+                        if session_data and 'metadata' in session_data:
+                            metadata = session_data['metadata']
+                        else:
+                            # Create basic metadata
+                            metadata = {
+                                'name': filename.replace('.fastshot', ''),
+                                'desc': 'Auto-generated metadata',
+                                'tags': [],
+                                'color': 'blue',
+                                'class': '',
+                                'image_count': 0,
+                                'file_size': 0,
+                                'created_at': datetime.now().isoformat(),
+                                'thumbnail_collage': None
+                            }
+                        
+                        if self.save_meta_index_to_cloud(filename, metadata):
+                            repair_results["metadata_created"] += 1
+                        else:
+                            repair_results["errors"].append(f"Failed to create metadata for {filename}")
+                    
+                    except Exception as e:
+                        repair_results["errors"].append(f"Error creating metadata for {filename}: {e}")
+            
+            # Delete orphaned metadata indexes
+            orphaned_metadata = integrity_results.get("orphaned_metadata", [])
+            if orphaned_metadata:
+                if progress_callback:
+                    progress_callback(50, f"Deleting {len(orphaned_metadata)} orphaned metadata indexes...")
+                
+                for i, filename in enumerate(orphaned_metadata):
+                    try:
+                        progress = 50 + (i / len(orphaned_metadata)) * 30
+                        if progress_callback:
+                            progress_callback(progress, f"Deleting orphaned metadata for {filename}...")
+                        
+                        base_name = filename.replace('.fastshot', '')
+                        meta_filename = f"{base_name}.meta.json"
+                        s3_key = f"meta_indexes/{meta_filename}"
+                        
+                        self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+                        repair_results["metadata_deleted"] += 1
+                    
+                    except Exception as e:
+                        repair_results["errors"].append(f"Error deleting orphaned metadata for {filename}: {e}")
+            
+            # Update overall metadata file
+            if progress_callback:
+                progress_callback(80, "Updating overall metadata file...")
+            
+            if self.update_overall_meta_file():
+                repair_results["overall_meta_updated"] = True
+            else:
+                repair_results["errors"].append("Failed to update overall metadata file")
+            
+            if progress_callback:
+                progress_callback(100, "Cloud structure repair completed")
+            
+            print(f"Cloud repair completed: {repair_results['metadata_created']} created, "
+                  f"{repair_results['metadata_deleted']} deleted")
+            
+            return repair_results
+            
+        except Exception as e:
+            error_msg = f"Error during cloud structure repair: {e}"
+            print(error_msg)
+            return {"success": False, "error": error_msg}
+    
+    def list_meta_indexes_in_cloud(self):
+        """List all metadata index files in cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return []
+            
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix='meta_indexes/'
+            )
+            
+            meta_indexes = []
+            for obj in response.get('Contents', []):
+                filename = obj['Key'].replace('meta_indexes/', '')
+                if filename.endswith('.meta.json'):
+                    meta_indexes.append({
+                        'filename': filename,
+                        'size': obj['Size'],
+                        'last_modified': obj['LastModified']
+                    })
+            
+            return meta_indexes
+            
+        except Exception as e:
+            print(f"Error listing metadata indexes in cloud: {e}")
+            return []
+    
+    def _calculate_checksum(self, data):
+        """Calculate SHA256 checksum for data."""
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        return hashlib.sha256(data).hexdigest()
+    
+    def _calculate_file_checksum_from_cloud(self, filename):
+        """Calculate checksum for a file in cloud storage."""
+        try:
+            s3_key = f"sessions/{filename}"
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            
+            # Use ETag as checksum if available (for files uploaded in single part)
+            etag = response.get('ETag', '').strip('"')
+            if etag and '-' not in etag:  # Single part upload
+                return f"etag:{etag}"
+            
+            # For multipart uploads or if ETag is not suitable, download and calculate
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            data = response['Body'].read()
+            return f"sha256:{self._calculate_checksum(data)}"
+            
+        except Exception as e:
+            print(f"Error calculating checksum for {filename}: {e}")
+            return ""
+
     def test_connection(self):
         """Test cloud connection with detailed error reporting."""
         try:
