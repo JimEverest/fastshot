@@ -2322,8 +2322,8 @@ class SessionManagerUI:
             return
         
         try:
-            # Get cache statistics
-            cache_stats = self.meta_cache.get_cache_stats()
+            # Get comprehensive cache statistics including session files
+            cache_stats = self.meta_cache.get_cache_statistics()
             
             # Create status dialog
             status_dialog = tk.Toplevel(self.window)
@@ -2354,14 +2354,26 @@ class SessionManagerUI:
             general_frame = ttk.Frame(notebook, padding="10")
             notebook.add(general_frame, text="General")
             
-            # Cache size
-            cache_size_mb = cache_stats.get('cache_size_bytes', 0) / (1024 * 1024)
-            ttk.Label(general_frame, text=f"Cache Size: {cache_size_mb:.2f} MB", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            # Cache size (metadata only)
+            metadata_cache_size_mb = cache_stats.get('cache_size_bytes', 0) / (1024 * 1024)
+            ttk.Label(general_frame, text=f"Metadata Cache Size: {metadata_cache_size_mb:.2f} MB", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Session cache size
+            session_cache_size_mb = cache_stats.get('session_cache_size_mb', 0)
+            ttk.Label(general_frame, text=f"Session Cache Size: {session_cache_size_mb:.2f} MB", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Total cache size
+            total_cache_size_mb = cache_stats.get('total_cache_size_mb', 0)
+            ttk.Label(general_frame, text=f"Total Cache Size: {total_cache_size_mb:.2f} MB", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=2)
             
             # File counts
             total_files = cache_stats.get('total_meta_files', 0)
             actual_files = cache_stats.get('actual_meta_files', 0)
             ttk.Label(general_frame, text=f"Metadata Files: {actual_files} (expected: {total_files})", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Session file counts
+            cached_session_files = cache_stats.get('cached_session_files', 0)
+            ttk.Label(general_frame, text=f"Cached Session Files: {cached_session_files}", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
             
             # Last sync
             last_sync = cache_stats.get('last_sync')
@@ -2420,6 +2432,64 @@ class SessionManagerUI:
                 corrupted_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             else:
                 ttk.Label(integrity_frame, text="No corrupted files found", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            # Session Cache Tab
+            session_cache_frame = ttk.Frame(notebook, padding="10")
+            notebook.add(session_cache_frame, text="Session Cache")
+            
+            # Session cache statistics
+            cached_sessions = cache_stats.get('cached_sessions', [])
+            ttk.Label(session_cache_frame, text=f"Cached Session Files: {len(cached_sessions)}", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=2)
+            
+            session_cache_size_mb = cache_stats.get('session_cache_size_mb', 0)
+            ttk.Label(session_cache_frame, text=f"Session Cache Size: {session_cache_size_mb:.2f} MB", font=("Arial", 10)).pack(anchor=tk.W, pady=2)
+            
+            if cached_sessions:
+                # List cached sessions
+                session_list_frame = ttk.LabelFrame(session_cache_frame, text="Cached Sessions", padding="5")
+                session_list_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+                
+                # Create treeview for session list
+                session_tree = ttk.Treeview(session_list_frame, columns=('size', 'cached_at'), show='tree headings', height=10)
+                session_tree.heading('#0', text='Filename')
+                session_tree.heading('size', text='Size')
+                session_tree.heading('cached_at', text='Cached At')
+                
+                session_tree.column('#0', width=300)
+                session_tree.column('size', width=100)
+                session_tree.column('cached_at', width=150)
+                
+                # Add session files to tree
+                for filename in cached_sessions:
+                    session_info = self.meta_cache.get_session_cache_info(filename)
+                    if session_info:
+                        size_mb = session_info['size'] / (1024 * 1024)
+                        cached_at = session_info.get('cached_at', 'Unknown')
+                        try:
+                            # Format the cached_at time
+                            cached_time = datetime.fromisoformat(cached_at)
+                            cached_str = cached_time.strftime("%Y-%m-%d %H:%M")
+                        except:
+                            cached_str = cached_at
+                        
+                        session_tree.insert('', 'end', text=filename, values=(f"{size_mb:.2f} MB", cached_str))
+                
+                session_scrollbar = ttk.Scrollbar(session_list_frame, orient="vertical", command=session_tree.yview)
+                session_tree.configure(yscrollcommand=session_scrollbar.set)
+                
+                session_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                session_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                
+                # Session cache management buttons
+                session_button_frame = ttk.Frame(session_cache_frame)
+                session_button_frame.pack(fill=tk.X, pady=(10, 0))
+                
+                ttk.Button(session_button_frame, text="Clear All Session Cache", 
+                          command=lambda: self._clear_session_cache_confirm(status_dialog)).pack(side=tk.LEFT, padx=5)
+                ttk.Button(session_button_frame, text="Optimize Cache", 
+                          command=lambda: self._optimize_session_cache(status_dialog)).pack(side=tk.LEFT, padx=5)
+            else:
+                ttk.Label(session_cache_frame, text="No session files cached", font=("Arial", 10)).pack(anchor=tk.W, pady=10)
             
             # Paths Tab (for debugging)
             paths_frame = ttk.Frame(notebook, padding="10")
@@ -2592,4 +2662,110 @@ class ProgressDialog:
         """Cancel the operation."""
         self.cancelled = True
         if self.dialog.winfo_exists():
-            self.dialog.destroy()
+            self.dialog.destroy()    
+  
+    def _clear_session_cache_confirm(self, parent_dialog):
+        """Confirm and clear session cache."""
+        if messagebox.askyesno("Confirm", "Are you sure you want to clear all cached session files?\n\nThis will not affect your cloud sessions, but you'll need to download them again when loading.", parent=parent_dialog):
+            try:
+                if self.meta_cache:
+                    success = self.meta_cache.clear_session_cache()
+                    if success:
+                        messagebox.showinfo("Success", "Session cache cleared successfully.", parent=parent_dialog)
+                        # Refresh the cache status dialog
+                        self._refresh_cache_status(parent_dialog)
+                    else:
+                        messagebox.showerror("Error", "Failed to clear session cache.", parent=parent_dialog)
+                else:
+                    messagebox.showerror("Error", "Cache manager not available.", parent=parent_dialog)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to clear session cache: {e}", parent=parent_dialog)
+    
+    def _optimize_session_cache(self, parent_dialog):
+        """Optimize session cache by removing old/large files."""
+        try:
+            if not self.meta_cache:
+                messagebox.showerror("Error", "Cache manager not available.", parent=parent_dialog)
+                return
+            
+            # Show optimization dialog
+            optimize_dialog = tk.Toplevel(parent_dialog)
+            optimize_dialog.title("Optimize Session Cache")
+            optimize_dialog.geometry("400x300")
+            optimize_dialog.transient(parent_dialog)
+            optimize_dialog.grab_set()
+            
+            # Center dialog
+            optimize_dialog.update_idletasks()
+            x = (optimize_dialog.winfo_screenwidth() // 2) - (400 // 2)
+            y = (optimize_dialog.winfo_screenheight() // 2) - (300 // 2)
+            optimize_dialog.geometry(f"400x300+{x}+{y}")
+            
+            main_frame = ttk.Frame(optimize_dialog, padding="20")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            ttk.Label(main_frame, text="Cache Optimization Settings", font=("Arial", 12, "bold")).pack(pady=(0, 20))
+            
+            # Max size setting
+            size_frame = ttk.Frame(main_frame)
+            size_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(size_frame, text="Maximum cache size (MB):").pack(side=tk.LEFT)
+            size_var = tk.StringVar(value="500")
+            size_entry = ttk.Entry(size_frame, textvariable=size_var, width=10)
+            size_entry.pack(side=tk.RIGHT)
+            
+            # Max age setting
+            age_frame = ttk.Frame(main_frame)
+            age_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(age_frame, text="Maximum file age (days):").pack(side=tk.LEFT)
+            age_var = tk.StringVar(value="30")
+            age_entry = ttk.Entry(age_frame, textvariable=age_var, width=10)
+            age_entry.pack(side=tk.RIGHT)
+            
+            # Info text
+            info_text = tk.Text(main_frame, height=8, width=50, wrap=tk.WORD)
+            info_text.pack(fill=tk.BOTH, expand=True, pady=(20, 0))
+            info_text.insert(tk.END, "Cache optimization will:\n\n")
+            info_text.insert(tk.END, "• Remove files older than the specified age\n")
+            info_text.insert(tk.END, "• Remove oldest files if cache exceeds size limit\n")
+            info_text.insert(tk.END, "• Keep frequently accessed files\n\n")
+            info_text.insert(tk.END, "This will not affect your cloud sessions, only local cache.")
+            info_text.config(state=tk.DISABLED)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(20, 0))
+            
+            def run_optimization():
+                try:
+                    max_size = int(size_var.get())
+                    max_age = int(age_var.get())
+                    
+                    result = self.meta_cache.optimize_session_cache(max_size, max_age)
+                    
+                    if result.get('success'):
+                        deleted_files = result.get('deleted_files', 0)
+                        deleted_size = result.get('deleted_size_mb', 0)
+                        remaining_files = result.get('remaining_files', 0)
+                        remaining_size = result.get('remaining_size_mb', 0)
+                        
+                        message = f"Optimization completed!\n\n"
+                        message += f"Deleted: {deleted_files} files ({deleted_size:.2f} MB)\n"
+                        message += f"Remaining: {remaining_files} files ({remaining_size:.2f} MB)"
+                        
+                        messagebox.showinfo("Optimization Complete", message, parent=optimize_dialog)
+                        optimize_dialog.destroy()
+                        self._refresh_cache_status(parent_dialog)
+                    else:
+                        messagebox.showerror("Error", f"Optimization failed: {result.get('error', 'Unknown error')}", parent=optimize_dialog)
+                        
+                except ValueError:
+                    messagebox.showerror("Error", "Please enter valid numbers for size and age.", parent=optimize_dialog)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Optimization failed: {e}", parent=optimize_dialog)
+            
+            ttk.Button(button_frame, text="Optimize", command=run_optimization).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=optimize_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open optimization dialog: {e}", parent=parent_dialog)

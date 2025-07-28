@@ -48,6 +48,10 @@ class MetaCacheManager:
         self.meta_indexes_dir = self.meta_cache_dir / "meta_indexes"
         self.sessions_cache_dir = self.cache_dir / "sessions"
         
+        # Ensure sessions cache directory is the same as CloudSyncManager's local_sessions_dir
+        # This creates a unified caching system
+        self.sessions_cache_dir = Path.home() / "fastshot_sessions"
+        
         # Cache files
         self.overall_meta_file = self.meta_cache_dir / "overall_meta.json"
         self.cache_info_file = self.meta_cache_dir / "cache_info.json"
@@ -194,11 +198,19 @@ class MetaCacheManager:
         """Calculate total size of cache directory in bytes."""
         total_size = 0
         try:
+            # Calculate metadata cache size
             for root, dirs, files in os.walk(self.meta_cache_dir):
                 for file in files:
                     file_path = Path(root) / file
                     if file_path.exists():
                         total_size += file_path.stat().st_size
+            
+            # Calculate session files cache size
+            if self.sessions_cache_dir.exists():
+                for session_file in self.sessions_cache_dir.glob("*.fastshot"):
+                    if session_file.exists():
+                        total_size += session_file.stat().st_size
+                        
         except Exception as e:
             logger.error(f"Failed to calculate cache size: {e}")
         return total_size
@@ -1136,4 +1148,222 @@ class MetaCacheManager:
         except Exception as e:
             logger.error(f"Error getting local cache filenames: {e}")
         
-        return local_filenames
+        return local_filenames   
+ 
+    def get_cached_session_files(self) -> List[str]:
+        """
+        Get list of cached session files.
+        
+        Returns:
+            List[str]: List of cached session filenames
+        """
+        try:
+            cached_files = []
+            if self.sessions_cache_dir.exists():
+                for session_file in self.sessions_cache_dir.glob("*.fastshot"):
+                    cached_files.append(session_file.name)
+            return cached_files
+        except Exception as e:
+            logger.error(f"Failed to get cached session files: {e}")
+            return []
+    
+    def is_session_cached(self, filename: str) -> bool:
+        """
+        Check if a session file is cached locally.
+        
+        Args:
+            filename: Session filename to check
+            
+        Returns:
+            bool: True if session is cached, False otherwise
+        """
+        try:
+            session_path = self.sessions_cache_dir / filename
+            return session_path.exists()
+        except Exception as e:
+            logger.error(f"Failed to check if session is cached: {e}")
+            return False
+    
+    def get_session_cache_info(self, filename: str) -> Optional[Dict]:
+        """
+        Get cache information for a specific session file.
+        
+        Args:
+            filename: Session filename
+            
+        Returns:
+            Optional[Dict]: Cache info including size, modification time, etc.
+        """
+        try:
+            session_path = self.sessions_cache_dir / filename
+            if not session_path.exists():
+                return None
+            
+            stat = session_path.stat()
+            return {
+                'filename': filename,
+                'size': stat.st_size,
+                'cached_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'path': str(session_path)
+            }
+        except Exception as e:
+            logger.error(f"Failed to get session cache info for {filename}: {e}")
+            return None
+    
+    def clear_session_cache(self, filename: Optional[str] = None) -> bool:
+        """
+        Clear session file cache.
+        
+        Args:
+            filename: Optional specific filename to clear. If None, clears all session cache.
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if filename:
+                # Clear specific session file
+                session_path = self.sessions_cache_dir / filename
+                if session_path.exists():
+                    session_path.unlink()
+                    logger.info(f"Cleared cached session: {filename}")
+                    return True
+                else:
+                    logger.warning(f"Session not found in cache: {filename}")
+                    return False
+            else:
+                # Clear all session cache files
+                if self.sessions_cache_dir.exists():
+                    cleared_count = 0
+                    for session_file in self.sessions_cache_dir.glob("*.fastshot"):
+                        try:
+                            session_file.unlink()
+                            cleared_count += 1
+                        except Exception as e:
+                            logger.error(f"Failed to delete cached session {session_file.name}: {e}")
+                    
+                    logger.info(f"Cleared {cleared_count} cached session files")
+                    return True
+                
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear session cache: {e}")
+            return False
+    
+    def get_cache_statistics(self) -> Dict:
+        """
+        Get comprehensive cache statistics including both metadata and session files.
+        
+        Returns:
+            Dict: Detailed cache statistics
+        """
+        try:
+            # Get basic cache stats
+            cache_stats = self.get_cache_stats()
+            
+            # Add session file statistics
+            cached_sessions = self.get_cached_session_files()
+            session_cache_size = 0
+            
+            for filename in cached_sessions:
+                session_info = self.get_session_cache_info(filename)
+                if session_info:
+                    session_cache_size += session_info['size']
+            
+            cache_stats.update({
+                'cached_session_files': len(cached_sessions),
+                'session_cache_size_bytes': session_cache_size,
+                'session_cache_size_mb': session_cache_size / (1024 * 1024),
+                'total_cache_size_mb': cache_stats.get('cache_size_bytes', 0) / (1024 * 1024),
+                'cached_sessions': cached_sessions
+            })
+            
+            return cache_stats
+            
+        except Exception as e:
+            logger.error(f"Failed to get cache statistics: {e}")
+            return {'error': str(e)}
+    
+    def optimize_session_cache(self, max_size_mb: int = 500, max_age_days: int = 30) -> Dict:
+        """
+        Optimize session cache by removing old or large files.
+        
+        Args:
+            max_size_mb: Maximum cache size in MB
+            max_age_days: Maximum age of cached files in days
+            
+        Returns:
+            Dict: Optimization results
+        """
+        try:
+            if not self.sessions_cache_dir.exists():
+                return {"success": True, "message": "No session cache to optimize"}
+            
+            current_time = time.time()
+            max_age_seconds = max_age_days * 24 * 3600
+            max_size_bytes = max_size_mb * 1024 * 1024
+            
+            # Get all session files with their info
+            session_files = []
+            total_size = 0
+            
+            for session_file in self.sessions_cache_dir.glob("*.fastshot"):
+                try:
+                    stat = session_file.stat()
+                    age_seconds = current_time - stat.st_mtime
+                    
+                    session_files.append({
+                        'path': session_file,
+                        'name': session_file.name,
+                        'size': stat.st_size,
+                        'age_seconds': age_seconds,
+                        'last_modified': stat.st_mtime
+                    })
+                    total_size += stat.st_size
+                    
+                except Exception as e:
+                    logger.error(f"Error getting info for {session_file}: {e}")
+            
+            # Sort by last modified time (oldest first)
+            session_files.sort(key=lambda x: x['last_modified'])
+            
+            deleted_files = []
+            deleted_size = 0
+            
+            # Remove files that are too old
+            for file_info in session_files[:]:
+                if file_info['age_seconds'] > max_age_seconds:
+                    try:
+                        file_info['path'].unlink()
+                        deleted_files.append(file_info['name'])
+                        deleted_size += file_info['size']
+                        total_size -= file_info['size']
+                        session_files.remove(file_info)
+                        logger.info(f"Deleted old cached session: {file_info['name']}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete old session {file_info['name']}: {e}")
+            
+            # Remove oldest files if cache is still too large
+            while total_size > max_size_bytes and session_files:
+                oldest_file = session_files.pop(0)
+                try:
+                    oldest_file['path'].unlink()
+                    deleted_files.append(oldest_file['name'])
+                    deleted_size += oldest_file['size']
+                    total_size -= oldest_file['size']
+                    logger.info(f"Deleted large cached session: {oldest_file['name']}")
+                except Exception as e:
+                    logger.error(f"Failed to delete large session {oldest_file['name']}: {e}")
+            
+            return {
+                "success": True,
+                "deleted_files": len(deleted_files),
+                "deleted_size_mb": deleted_size / (1024 * 1024),
+                "remaining_files": len(session_files),
+                "remaining_size_mb": total_size / (1024 * 1024),
+                "deleted_filenames": deleted_files
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to optimize session cache: {e}")
+            return {"success": False, "error": str(e)}

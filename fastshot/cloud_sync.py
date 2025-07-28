@@ -437,17 +437,47 @@ class CloudSyncManager:
         except Exception as e:
             print(f"Error during rollback: {e}")
     
-    def load_session_from_cloud(self, filename):
-        """Load session from cloud with decryption."""
+    def load_session_from_cloud(self, filename, use_cache=True):
+        """Load session from cloud with decryption and intelligent caching."""
         try:
+            # Check local cache first if enabled
+            if use_cache:
+                local_path = self.local_sessions_dir / filename
+                if local_path.exists():
+                    print(f"Loading session from local cache: {filename}")
+                    try:
+                        with open(local_path, 'rb') as f:
+                            disguised_data = f.read()
+                        
+                        # Extract and decrypt cached data
+                        encrypted_data = self._extract_from_image(disguised_data)
+                        decrypted_data = self._decrypt_data(encrypted_data)
+                        session_data = json.loads(decrypted_data.decode('utf-8'))
+                        
+                        return session_data
+                    except Exception as cache_error:
+                        print(f"Error loading from cache, will download from cloud: {cache_error}")
+                        # Continue to cloud download if cache fails
+            
             if not self.cloud_sync_enabled or not self._init_s3_client():
                 return None
             
+            print(f"Downloading session from cloud: {filename}")
             s3_key = f"sessions/{filename}"
             
             # Download from S3
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
             disguised_data = response['Body'].read()
+            
+            # Cache the downloaded data locally if caching is enabled
+            if use_cache:
+                try:
+                    local_path = self.local_sessions_dir / filename
+                    with open(local_path, 'wb') as f:
+                        f.write(disguised_data)
+                    print(f"Cached session locally: {filename}")
+                except Exception as cache_error:
+                    print(f"Warning: Could not cache session locally: {cache_error}")
             
             # Extract hidden data
             encrypted_data = self._extract_from_image(disguised_data)

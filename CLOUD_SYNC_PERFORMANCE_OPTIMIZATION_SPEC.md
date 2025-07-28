@@ -62,6 +62,8 @@ Local Cache:
 │   ├── meta_indexes/                        # Individual metadata cache
 │   └── overall_meta.json                    # Master metadata cache
 └── cache_info.json                          # Cache state information
+
+~/fastshot_sessions -- Full session files cache
 ```
 
 ### Meta Index File Format
