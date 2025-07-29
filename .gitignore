@@ -18,6 +18,17 @@ fastshot/plugins/plugin_hyder.py
 fastshot/plugins/plugin_mini.py
 fastshot/plugins/plugin_retriver.py
 fastshot/plugins/utils/hyder.py
+fastshot/plugins/docs/*
 temp.png
 output/2025-06-21-22-00-43-121.png
 tests/test_one_api.py
+test_plugins/*
+demo_error_handling.py
+.kiro/specs/quick-cloud-hyder/*
+check_s3_structure.py
+fastshot/plugins/plugin_quick_c_hyder.py
+fastshot/plugins/plugin_quick_c_retriver.py
+fastshot/plugins/utils/clipboard_validator.py
+fastshot/plugins/utils/cloud_error_handler.py
+fastshot/plugins/utils/error_handler.py
+fastshot/plugins/utils/last_upload_tracker.py
