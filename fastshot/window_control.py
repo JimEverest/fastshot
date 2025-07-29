@@ -150,6 +150,11 @@ class HotkeyListener:
         self.plugin_shortcuts = {}
         self.plugin_key_counts = {}
         self.plugin_last_press_times = {}
+        
+        # Alternate hotkey tracking
+        self.alternate_hotkey_sequences = {}  # plugin_id -> sequence state
+        self.alternate_hotkey_configs = {}    # plugin_id -> config
+        
         self.config = config
         self.root = root  # Tkinter root window
         self.app = app  # Reference to main application
@@ -177,12 +182,37 @@ class HotkeyListener:
                 continue
 
     def register_plugin_hotkey(self, plugin_id, key_str, press_times):
-        self.plugin_shortcuts[key_str] = {
-            'plugin_id': plugin_id,
-            'press_times': press_times
+        # Check if this is an alternate hotkey pattern
+        if key_str in ['ctrl_alt_alternate', 'ctrl_win_alternate']:
+            self.register_alternate_hotkey(plugin_id, key_str, press_times)
+        else:
+            self.plugin_shortcuts[key_str] = {
+                'plugin_id': plugin_id,
+                'press_times': press_times
+            }
+            self.plugin_key_counts[key_str] = 0
+            self.plugin_last_press_times[key_str] = 0
+    
+    def register_alternate_hotkey(self, plugin_id, pattern, press_times):
+        """Register an alternate hotkey pattern."""
+        if pattern == 'ctrl_alt_alternate':
+            keys = ['ctrl', 'alt'] * (press_times // 2)
+        elif pattern == 'ctrl_win_alternate':
+            keys = ['ctrl', 'cmd'] * (press_times // 2)
+        else:
+            return
+        
+        self.alternate_hotkey_configs[plugin_id] = {
+            'pattern': pattern,
+            'keys': keys,
+            'total_presses': press_times
         }
-        self.plugin_key_counts[key_str] = 0
-        self.plugin_last_press_times[key_str] = 0
+        
+        self.alternate_hotkey_sequences[plugin_id] = {
+            'current_step': 0,
+            'last_press_time': 0,
+            'timeout': 2.0  # 2 seconds timeout for the sequence
+        }
 
     def load_hotkeys(self):
         shortcuts = self.config['Shortcuts']
@@ -335,6 +365,11 @@ class HotkeyListener:
             self.ctrl_press_count = 0
 
         key_char = self.get_key_char(key)
+        
+        # Handle alternate hotkey sequences
+        self.handle_alternate_hotkey(key_char)
+        
+        # Handle regular plugin shortcuts
         if key_char in self.plugin_shortcuts:
             current_time = time.time()
             last_press_time = self.plugin_last_press_times.get(key_char, 0)
@@ -358,6 +393,36 @@ class HotkeyListener:
             if dy != 0:
                 zoom_in = dy > 0
                 resize_foreground_window(zoom_in)
+
+    def handle_alternate_hotkey(self, key_char):
+        """Handle alternate hotkey sequences."""
+        current_time = time.time()
+        
+        for plugin_id, config in self.alternate_hotkey_configs.items():
+            sequence = self.alternate_hotkey_sequences[plugin_id]
+            
+            # Check if sequence has timed out
+            if current_time - sequence['last_press_time'] > sequence['timeout']:
+                sequence['current_step'] = 0
+            
+            # Check if this key matches the expected key in the sequence
+            expected_key = config['keys'][sequence['current_step']]
+            if key_char == expected_key:
+                sequence['current_step'] += 1
+                sequence['last_press_time'] = current_time
+                
+                print(f"Alternate hotkey progress for {plugin_id}: {sequence['current_step']}/{len(config['keys'])}")
+                
+                # Check if sequence is complete
+                if sequence['current_step'] >= len(config['keys']):
+                    print(f"Alternate hotkey sequence completed for {plugin_id}")
+                    self.activate_plugin(plugin_id)
+                    sequence['current_step'] = 0  # Reset sequence
+            else:
+                # Wrong key pressed, reset sequence if it was in progress
+                if sequence['current_step'] > 0:
+                    print(f"Alternate hotkey sequence reset for {plugin_id} (expected {expected_key}, got {key_char})")
+                    sequence['current_step'] = 0
 
     def activate_plugin(self, plugin_id):
         plugin_data = self.app.plugins.get(plugin_id)
