@@ -264,6 +264,10 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_session_manager', '<shift>+<f6>')),
             self.on_session_manager
         )
+        self.hotkey_quick_notes = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_quick_notes', '<shift>+<f7>')),
+            self.on_quick_notes
+        )
 
         # Load the 4-times Ctrl hotkey settings
         self.ask_dialog_key = shortcuts.get('hotkey_ask_dialog_key', 'ctrl').lower()
@@ -329,6 +333,7 @@ class HotkeyListener:
         self.hotkey_save_session.press(self.listener.canonical(key))
         self.hotkey_load_session.press(self.listener.canonical(key))
         self.hotkey_session_manager.press(self.listener.canonical(key))
+        self.hotkey_quick_notes.press(self.listener.canonical(key))
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             if self.ctrl_press_count < self.ask_dialog_press_count:
@@ -349,6 +354,7 @@ class HotkeyListener:
         self.hotkey_save_session.release(self.listener.canonical(key))
         self.hotkey_load_session.release(self.listener.canonical(key))
         self.hotkey_session_manager.release(self.listener.canonical(key))
+        self.hotkey_quick_notes.release(self.listener.canonical(key))
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
@@ -507,6 +513,19 @@ class HotkeyListener:
                 print("ERROR: app does not have open_session_manager method")
         except Exception as e:
             print(f"ERROR in on_session_manager: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def on_quick_notes(self):
+        """Callback for the quick notes hotkey."""
+        print("Quick notes hotkey activated")
+        try:
+            if hasattr(self.app, 'open_quick_notes'):
+                self.root.after(0, self.app.open_quick_notes)
+            else:
+                print("ERROR: app does not have open_quick_notes method")
+        except Exception as e:
+            print(f"ERROR in on_quick_notes: {e}")
             import traceback
             traceback.print_exc()
 

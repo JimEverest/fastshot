@@ -78,6 +78,363 @@ class CloudSyncManager:
             print(f"Error loading cloud config: {e}")
             self._set_default_config()
     
+    # Notes-specific cloud sync methods
+    def save_note_to_cloud(self, note_data: dict) -> bool:
+        """
+        Save a note to cloud storage.
+        
+        Args:
+            note_data: Note data dictionary
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return False
+            
+            note_id = note_data.get("id")
+            if not note_id:
+                print("Error: Note ID is required for cloud sync")
+                return False
+            
+            # Prepare note data for cloud storage
+            cloud_note_data = note_data.copy()
+            cloud_note_data["cloud_sync_timestamp"] = datetime.now().isoformat()
+            
+            # Convert to JSON
+            note_json = json.dumps(cloud_note_data, indent=2, ensure_ascii=False)
+            
+            # Encrypt if encryption is enabled
+            if self.encryption_key:
+                note_json = self._encrypt_data(note_json)
+            
+            # Upload to S3
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=note_json,
+                ContentType='application/json'
+            )
+            
+            print(f"Note saved to cloud: {note_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving note to cloud: {e}")
+            return False
+    
+    def load_note_from_cloud(self, note_id: str) -> dict:
+        """
+        Load a note from cloud storage.
+        
+        Args:
+            note_id: Note identifier
+            
+        Returns:
+            dict: Note data if found, None otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return None
+            
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=s3_key
+            )
+            
+            note_data = response['Body'].read()
+            
+            # Decrypt if encryption is enabled
+            if self.encryption_key:
+                note_data = self._decrypt_data(note_data)
+            
+            # Parse JSON
+            note_json = json.loads(note_data)
+            
+            print(f"Note loaded from cloud: {note_id}")
+            return note_json
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print(f"Note not found in cloud: {note_id}")
+            else:
+                print(f"Error loading note from cloud: {e}")
+            return None
+        except Exception as e:
+            print(f"Error loading note from cloud: {e}")
+            return None
+    
+    def delete_note_from_cloud(self, note_id: str) -> bool:
+        """
+        Delete a note from cloud storage.
+        
+        Args:
+            note_id: Note identifier
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return False
+            
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            # Delete from S3
+            self.s3_client.delete_object(
+                Bucket=self.bucket_name,
+                Key=s3_key
+            )
+            
+            print(f"Note deleted from cloud: {note_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error deleting note from cloud: {e}")
+            return False
+    
+    def load_notes_overall_index(self) -> dict:
+        """
+        Load the overall notes index from cloud storage.
+        
+        Returns:
+            dict: Notes index if found, None otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return None
+            
+            s3_key = "quicknotes/overall_notes_index.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=s3_key
+            )
+            
+            index_data = response['Body'].read()
+            
+            # Decrypt if encryption is enabled
+            if self.encryption_key:
+                index_data = self._decrypt_data(index_data)
+            
+            # Parse JSON
+            index_json = json.loads(index_data)
+            
+            print("Notes index loaded from cloud")
+            return index_json
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print("Notes index not found in cloud, creating empty index")
+                return self._create_empty_notes_index()
+            else:
+                print(f"Error loading notes index from cloud: {e}")
+            return None
+        except Exception as e:
+            print(f"Error loading notes index from cloud: {e}")
+            return None
+    
+    def update_notes_overall_index(self) -> bool:
+        """
+        Update the overall notes index in cloud storage by scanning all notes.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return False
+            
+            # List all notes in cloud
+            notes_prefix = "quicknotes/notes/"
+            notes_list = []
+            
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=self.bucket_name, Prefix=notes_prefix)
+            
+            total_words = 0
+            total_size = 0
+            most_recent_update = None
+            
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        if obj['Key'].endswith('.json'):
+                            try:
+                                # Load note metadata
+                                note_data = self.load_note_from_cloud(
+                                    obj['Key'].replace(notes_prefix, '').replace('.json', '')
+                                )
+                                
+                                if note_data:
+                                    # Extract metadata for index
+                                    note_info = {
+                                        "id": note_data.get("id"),
+                                        "title": note_data.get("title"),
+                                        "short_code": note_data.get("short_code"),
+                                        "created_at": note_data.get("created_at"),
+                                        "updated_at": note_data.get("updated_at"),
+                                        "file_size": obj['Size'],
+                                        "word_count": note_data.get("metadata", {}).get("word_count", 0)
+                                    }
+                                    
+                                    notes_list.append(note_info)
+                                    
+                                    # Update statistics
+                                    total_words += note_info["word_count"]
+                                    total_size += note_info["file_size"]
+                                    
+                                    # Track most recent update
+                                    if not most_recent_update or note_info["updated_at"] > most_recent_update:
+                                        most_recent_update = note_info["updated_at"]
+                                        
+                            except Exception as e:
+                                print(f"Error processing note {obj['Key']}: {e}")
+                                continue
+            
+            # Create updated index
+            index_data = {
+                "version": "1.0",
+                "last_updated": datetime.now().isoformat(),
+                "total_notes": len(notes_list),
+                "notes": notes_list,
+                "statistics": {
+                    "total_words": total_words,
+                    "total_size_bytes": total_size,
+                    "most_recent_update": most_recent_update
+                }
+            }
+            
+            # Save index to cloud
+            return self._save_notes_index_to_cloud(index_data)
+            
+        except Exception as e:
+            print(f"Error updating notes index: {e}")
+            return False
+    
+    def rebuild_notes_index(self) -> dict:
+        """
+        Rebuild the notes index by downloading all notes from cloud.
+        
+        Returns:
+            dict: Result with success status and statistics
+        """
+        try:
+            print("Starting notes index rebuild...")
+            
+            if not self._ensure_s3_client():
+                return {"success": False, "error": "S3 client not available"}
+            
+            # This is the same as update_notes_overall_index but with more detailed reporting
+            success = self.update_notes_overall_index()
+            
+            if success:
+                # Load the rebuilt index to get statistics
+                index_data = self.load_notes_overall_index()
+                if index_data:
+                    return {
+                        "success": True,
+                        "total_notes": index_data.get("total_notes", 0),
+                        "total_words": index_data.get("statistics", {}).get("total_words", 0),
+                        "total_size_bytes": index_data.get("statistics", {}).get("total_size_bytes", 0)
+                    }
+            
+            return {"success": False, "error": "Failed to rebuild index"}
+            
+        except Exception as e:
+            print(f"Error rebuilding notes index: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def get_note_public_url(self, note_id: str, expiration: int = 3600) -> str:
+        """
+        Generate a public URL for a note.
+        
+        Args:
+            note_id: Note identifier
+            expiration: URL expiration time in seconds (default 1 hour)
+            
+        Returns:
+            str: Public URL if successful, None otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return None
+            
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            # Generate presigned URL
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': self.bucket_name, 'Key': s3_key},
+                ExpiresIn=expiration
+            )
+            
+            print(f"Generated public URL for note: {note_id}")
+            return url
+            
+        except Exception as e:
+            print(f"Error generating public URL for note: {e}")
+            return None
+    
+    def _create_empty_notes_index(self) -> dict:
+        """Create an empty notes index structure."""
+        return {
+            "version": "1.0",
+            "last_updated": datetime.now().isoformat(),
+            "total_notes": 0,
+            "notes": [],
+            "statistics": {
+                "total_words": 0,
+                "total_size_bytes": 0,
+                "most_recent_update": None
+            }
+        }
+    
+    def _save_notes_index_to_cloud(self, index_data: dict) -> bool:
+        """
+        Save notes index to cloud storage.
+        
+        Args:
+            index_data: Index data to save
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._ensure_s3_client():
+                return False
+            
+            # Convert to JSON
+            index_json = json.dumps(index_data, indent=2, ensure_ascii=False)
+            
+            # Encrypt if encryption is enabled
+            if self.encryption_key:
+                index_json = self._encrypt_data(index_json)
+            
+            # Upload to S3
+            s3_key = "quicknotes/overall_notes_index.json"
+            
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=index_json,
+                ContentType='application/json'
+            )
+            
+            print("Notes index saved to cloud")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving notes index to cloud: {e}")
+            return False
+    
     def _reset_s3_client(self):
         """Reset the S3 client to force recreation on next use."""
         self.s3_client = None
@@ -1203,6 +1560,291 @@ class CloudSyncManager:
         except Exception as e:
             print(f"Error calculating checksum for {filename}: {e}")
             return ""
+
+    # ===== NOTES SYNCHRONIZATION METHODS =====
+    
+    def save_note_to_cloud(self, note_data):
+        """Save a note to cloud storage in quicknotes/notes/ folder."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return False
+            
+            note_id = note_data.get('id')
+            if not note_id:
+                print("Error: Note ID is required")
+                return False
+            
+            # Convert note data to JSON
+            json_data = json.dumps(note_data, indent=2, ensure_ascii=False).encode('utf-8')
+            
+            # Upload to S3 in quicknotes/notes/ folder
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=json_data,
+                ContentType='application/json'
+            )
+            
+            print(f"Note saved to cloud: {s3_key}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving note to cloud: {e}")
+            return False
+    
+    def load_note_from_cloud(self, note_id):
+        """Load a note from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            json_data = response['Body'].read()
+            
+            # Parse JSON
+            note_data = json.loads(json_data.decode('utf-8'))
+            
+            print(f"Note loaded from cloud: {note_id}")
+            return note_data
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print(f"Note not found in cloud: {note_id}")
+                return None
+            else:
+                print(f"Error loading note from cloud: {e}")
+                return None
+        except Exception as e:
+            print(f"Error loading note from cloud: {e}")
+            return None
+    
+    def delete_note_from_cloud(self, note_id):
+        """Delete a note from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return False
+            
+            # Delete note file
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=s3_key)
+            
+            print(f"Note deleted from cloud: {note_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error deleting note from cloud: {e}")
+            return False
+    
+    def get_note_public_url(self, note_id, expiration=3600):
+        """Generate a public URL for a note with expiration time."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            s3_key = f"quicknotes/notes/{note_id}.json"
+            
+            # Generate presigned URL
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': self.bucket_name, 'Key': s3_key},
+                ExpiresIn=expiration
+            )
+            
+            print(f"Generated public URL for note: {note_id}")
+            return url
+            
+        except Exception as e:
+            print(f"Error generating public URL for note: {e}")
+            return None
+    
+    def update_notes_overall_index(self):
+        """Update the overall notes index file with current notes list."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return False
+            
+            # List all notes in cloud
+            notes_list = self.list_notes_in_cloud()
+            
+            # Create overall notes index structure
+            overall_notes_index = {
+                "version": "1.0",
+                "last_updated": datetime.now().isoformat(),
+                "total_notes": len(notes_list),
+                "notes": []
+            }
+            
+            # Add note information
+            total_words = 0
+            total_size = 0
+            most_recent_update = None
+            
+            for note_info in notes_list:
+                try:
+                    # Load note to get metadata
+                    note_data = self.load_note_from_cloud(note_info['id'])
+                    if note_data:
+                        note_summary = {
+                            "id": note_data.get('id'),
+                            "title": note_data.get('title', ''),
+                            "short_code": note_data.get('short_code', ''),
+                            "created_at": note_data.get('created_at'),
+                            "updated_at": note_data.get('updated_at'),
+                            "file_size": note_info.get('size', 0),
+                            "word_count": note_data.get('metadata', {}).get('word_count', 0)
+                        }
+                        overall_notes_index['notes'].append(note_summary)
+                        
+                        # Update statistics
+                        total_words += note_summary['word_count']
+                        total_size += note_summary['file_size']
+                        
+                        # Track most recent update
+                        if note_summary['updated_at']:
+                            if not most_recent_update or note_summary['updated_at'] > most_recent_update:
+                                most_recent_update = note_summary['updated_at']
+                
+                except Exception as e:
+                    print(f"Warning: Could not process note {note_info.get('id', 'unknown')}: {e}")
+                    continue
+            
+            # Add statistics
+            overall_notes_index['statistics'] = {
+                "total_words": total_words,
+                "total_size_bytes": total_size,
+                "most_recent_update": most_recent_update
+            }
+            
+            # Convert to JSON
+            json_data = json.dumps(overall_notes_index, indent=2, ensure_ascii=False).encode('utf-8')
+            
+            # Upload to S3
+            s3_key = "quicknotes/overall_notes_index.json"
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=json_data,
+                ContentType='application/json'
+            )
+            
+            print(f"Overall notes index updated with {len(notes_list)} notes")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating overall notes index: {e}")
+            return False
+    
+    def load_notes_overall_index(self):
+        """Load the overall notes index file from cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return None
+            
+            s3_key = "quicknotes/overall_notes_index.json"
+            
+            # Download from S3
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            json_data = response['Body'].read()
+            
+            # Parse JSON
+            overall_notes_index = json.loads(json_data.decode('utf-8'))
+            
+            print(f"Loaded overall notes index with {overall_notes_index.get('total_notes', 0)} notes")
+            return overall_notes_index
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                print("Overall notes index file not found in cloud")
+                return None
+            else:
+                print(f"Error loading overall notes index from cloud: {e}")
+                return None
+        except Exception as e:
+            print(f"Error loading overall notes index from cloud: {e}")
+            return None
+    
+    def list_notes_in_cloud(self):
+        """List all notes in cloud storage."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return []
+            
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix='quicknotes/notes/'
+            )
+            
+            notes = []
+            for obj in response.get('Contents', []):
+                filename = obj['Key'].replace('quicknotes/notes/', '')
+                if filename.endswith('.json'):
+                    note_id = filename.replace('.json', '')
+                    notes.append({
+                        'id': note_id,
+                        'filename': filename,
+                        'size': obj['Size'],
+                        'last_modified': obj['LastModified']
+                    })
+            
+            return notes
+            
+        except Exception as e:
+            print(f"Error listing notes in cloud: {e}")
+            return []
+    
+    def rebuild_notes_index(self):
+        """Rebuild notes index by downloading all notes from cloud and reconstructing the index."""
+        try:
+            if not self.cloud_sync_enabled or not self._init_s3_client():
+                return {"success": False, "error": "Cloud sync not available"}
+            
+            # Get list of all notes in cloud
+            notes_list = self.list_notes_in_cloud()
+            
+            if not notes_list:
+                # Create empty index if no notes exist
+                empty_index = {
+                    "version": "1.0",
+                    "last_updated": datetime.now().isoformat(),
+                    "total_notes": 0,
+                    "notes": [],
+                    "statistics": {
+                        "total_words": 0,
+                        "total_size_bytes": 0,
+                        "most_recent_update": None
+                    }
+                }
+                
+                # Save empty index
+                json_data = json.dumps(empty_index, indent=2, ensure_ascii=False).encode('utf-8')
+                s3_key = "quicknotes/overall_notes_index.json"
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    Body=json_data,
+                    ContentType='application/json'
+                )
+                
+                return {"success": True, "message": "Created empty notes index", "total_notes": 0}
+            
+            # Update the overall index (this will process all notes)
+            if self.update_notes_overall_index():
+                return {
+                    "success": True, 
+                    "message": f"Successfully rebuilt notes index with {len(notes_list)} notes",
+                    "total_notes": len(notes_list)
+                }
+            else:
+                return {"success": False, "error": "Failed to update notes index"}
+            
+        except Exception as e:
+            error_msg = f"Error rebuilding notes index: {e}"
+            print(error_msg)
+            return {"success": False, "error": error_msg}
 
     def test_connection(self):
         """Test cloud connection with detailed error reporting."""

@@ -132,6 +132,15 @@ class SnipasteApp:
         # Initialize cloud sync manager
         self.cloud_sync = CloudSyncManager(self)
 
+        # Initialize notes manager and cache manager
+        from fastshot.notes_manager import NotesManager
+        from fastshot.notes_cache import NotesCacheManager
+        self.notes_manager = NotesManager(self)
+        self.notes_cache = NotesCacheManager()
+        
+        # Initialize quick notes UI (lazy initialization)
+        self.quick_notes_ui = None
+
         # Initialize ScreenPen
         enable_screenpen = self.config['ScreenPen'].getboolean('enable_screenpen', True)
         if enable_screenpen:
@@ -220,7 +229,8 @@ class SnipasteApp:
                 'hotkey_reposition_windows': '<shift>+<f3>',
                 'hotkey_save_session': '<shift>+<f4>',
                 'hotkey_load_session': '<shift>+<f5>',
-                'hotkey_session_manager': '<shift>+<f6>'
+                'hotkey_session_manager': '<shift>+<f6>',
+                'hotkey_quick_notes': '<shift>+<f7>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -256,7 +266,8 @@ class SnipasteApp:
             'hotkey_reposition_windows': 'Reposition All Image Windows to Origin',
             'hotkey_save_session': 'Save Current Session',
             'hotkey_load_session': 'Load Session',
-            'hotkey_session_manager': 'Open Session Manager'
+            'hotkey_session_manager': 'Open Session Manager',
+            'hotkey_quick_notes': 'Open Quick Notes'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -552,6 +563,30 @@ class SnipasteApp:
             traceback.print_exc()
         except Exception as e:
             print(f"ERROR in open_session_manager: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_quick_notes(self):
+        """Opens the Quick Notes UI."""
+        try:
+            print("DEBUG: open_quick_notes called")
+            
+            if not self.quick_notes_ui:
+                print("DEBUG: Creating QuickNotesUI instance")
+                from fastshot.quick_notes_ui import QuickNotesUI
+                self.quick_notes_ui = QuickNotesUI(self)
+                print("DEBUG: QuickNotesUI created successfully")
+            
+            print("DEBUG: Calling show_window()")
+            self.quick_notes_ui.show_window()
+            print("DEBUG: show_window() completed")
+            
+        except ImportError as e:
+            print(f"ERROR: Failed to import QuickNotesUI: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            print(f"ERROR in open_quick_notes: {e}")
             import traceback
             traceback.print_exc()
     
