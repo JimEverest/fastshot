@@ -1,8 +1,17 @@
 from setuptools import setup, find_packages
+import os
+
+# Read version from __version__.py
+def get_version():
+    version_file = os.path.join(os.path.dirname(__file__), 'fastshot', '__version__.py')
+    with open(version_file, 'r', encoding='utf-8') as f:
+        exec(f.read())
+    print("setting up ", locals()['__version__'])
+    return locals()['__version__']
 
 setup(
     name='fastshot',
-    version='1.4.0',
+    version=get_version(),
     packages=find_packages(),
     include_package_data=True,
     install_requires=[

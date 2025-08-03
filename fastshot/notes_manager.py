@@ -231,31 +231,22 @@ class NotesManager:
             Dict containing notes list and pagination info
         """
         try:
-            # Get all note files
-            note_files = list(self.notes_dir.glob("*.json"))
-            
-            # Load and validate notes
-            notes = []
-            for note_file in note_files:
-                try:
-                    with open(note_file, 'r', encoding='utf-8') as f:
-                        note_data = json.load(f)
-                    
-                    if self._validate_note_data(note_data):
-                        # Extract essential info for listing
-                        note_info = {
-                            "id": note_data["id"],
-                            "title": note_data["title"],
-                            "short_code": note_data["short_code"],
-                            "created_at": note_data["created_at"],
-                            "updated_at": note_data["updated_at"],
-                            "tags": note_data["tags"],
-                            "word_count": note_data["metadata"]["word_count"]
-                        }
-                        notes.append(note_info)
-                except Exception as e:
-                    print(f"Error loading note {note_file.name}: {e}")
-                    continue
+            # Performance optimization: Use cached index if available (same as search_notes)
+            if hasattr(self.app, 'notes_cache'):
+                cache_manager = self.app.notes_cache
+                cached_index = cache_manager.get_cached_index()
+                cached_notes = cached_index.get("notes", [])
+                
+                # If cache has notes, use them for the list
+                if cached_notes:
+                    print(f"DEBUG: Using cached index with {len(cached_notes)} notes for list_notes")
+                    notes = cached_notes.copy()
+                else:
+                    print("DEBUG: Cache is empty, falling back to local files")
+                    notes = self._load_notes_from_local_files()
+            else:
+                print("DEBUG: No cache manager available, using local files only")
+                notes = self._load_notes_from_local_files()
             
             # Sort by updated_at (most recent first)
             notes.sort(key=lambda x: x["updated_at"], reverse=True)
@@ -572,6 +563,39 @@ class NotesManager:
         pattern = r'^\d{8}_\d{6}_[A-Z0-9]{4}$'
         return bool(re.match(pattern, note_id))
     
+    def _load_notes_from_local_files(self) -> List[Dict[str, Any]]:
+        """Load notes from local files (fallback when cache is not available)."""
+        notes = []
+        try:
+            # Get all note files
+            note_files = list(self.notes_dir.glob("*.json"))
+            
+            # Load and validate notes
+            for note_file in note_files:
+                try:
+                    with open(note_file, 'r', encoding='utf-8') as f:
+                        note_data = json.load(f)
+                    
+                    if self._validate_note_data(note_data):
+                        # Extract essential info for listing
+                        note_info = {
+                            "id": note_data["id"],
+                            "title": note_data["title"],
+                            "short_code": note_data["short_code"],
+                            "created_at": note_data["created_at"],
+                            "updated_at": note_data["updated_at"],
+                            "tags": note_data["tags"],
+                            "word_count": note_data["metadata"]["word_count"]
+                        }
+                        notes.append(note_info)
+                except Exception as e:
+                    print(f"Error loading note {note_file.name}: {e}")
+                    continue
+        except Exception as e:
+            print(f"Error loading notes from local files: {e}")
+        
+        return notes
+    
     def _fuzzy_match(self, query: str, text: str) -> bool:
         """Simple fuzzy matching for search."""
         # Simple implementation: check if most characters of query are in text
@@ -636,6 +660,68 @@ class NotesManager:
     def get_search_history(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent search history."""
         return self.search_history[:limit]
+    
+    def get_sync_status(self) -> Dict[str, Any]:
+        """Get synchronization status information for debugging."""
+        try:
+            status = {
+                "local_notes_count": 0,
+                "cached_notes_count": 0,
+                "cache_available": False,
+                "cloud_sync_available": bool(self.cloud_sync),
+                "sync_health": "unknown",
+                "last_error": None
+            }
+            
+            # Count local notes
+            try:
+                local_notes = self._load_notes_from_local_files()
+                status["local_notes_count"] = len(local_notes)
+            except Exception as e:
+                status["last_error"] = f"Error counting local notes: {e}"
+            
+            # Check cache status
+            if hasattr(self.app, 'notes_cache'):
+                status["cache_available"] = True
+                try:
+                    cache_manager = self.app.notes_cache
+                    cached_index = cache_manager.get_cached_index()
+                    status["cached_notes_count"] = len(cached_index.get("notes", []))
+                    
+                    # Check if cache is valid
+                    if cache_manager.validate_cache():
+                        status["sync_health"] = "healthy"
+                    else:
+                        status["sync_health"] = "cache_invalid"
+                        status["last_error"] = "Cache validation failed"
+                        
+                except Exception as e:
+                    status["sync_health"] = "cache_error"
+                    status["last_error"] = f"Cache error: {e}"
+            
+            # Test cloud connectivity if available
+            if self.cloud_sync:
+                try:
+                    # Simple test - try to list notes (doesn't download)
+                    cloud_notes = self.cloud_sync.list_notes_in_cloud()
+                    if isinstance(cloud_notes, list):
+                        status["cloud_notes_count"] = len(cloud_notes)
+                        if status["sync_health"] == "healthy":
+                            status["sync_health"] = "healthy"
+                    else:
+                        status["sync_health"] = "cloud_error"
+                        status["last_error"] = "Cloud connectivity test failed"
+                except Exception as e:
+                    status["sync_health"] = "failed"
+                    status["last_error"] = f"Cloud sync error: {e}"
+            
+            return status
+            
+        except Exception as e:
+            return {
+                "error": f"Failed to get sync status: {e}",
+                "sync_health": "error"
+            }
     
     def clear_search_history(self):
         """Clear all search history."""

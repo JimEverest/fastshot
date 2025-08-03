@@ -38,6 +38,15 @@ from fastshot.ask_dialog import AskDialog
 from fastshot.session_manager import SessionManager  # 导入 SessionManager
 from fastshot.cloud_sync import CloudSyncManager  # 导入 CloudSyncManager
 
+# Import version information
+try:
+    from fastshot import __version__, __author__, __description__
+except ImportError:
+    # Fallback for development environment
+    __version__ = "1.4.1-dev"
+    __author__ = "Jim T"
+    __description__ = "A versatile screen capturing tool with annotation and OCR features"
+
 
 import importlib
 import pkgutil
@@ -247,6 +256,14 @@ class SnipasteApp:
         return config
 
     def print_config_info(self):
+        # Print version information
+        print("=" * 60)
+        print(f"🚀 Fastshot v{__version__}")
+        # print(f"📝 {__description__}")
+        # print(f"👨‍💻 Author: {__author__}")
+        print("=" * 60)
+        print()
+        
         print(f"Config file path: {self.config_path}")
         print("Shortcut settings:")
         shortcut_descriptions = {
