@@ -4,10 +4,11 @@ import os
 # Read version from __version__.py
 def get_version():
     version_file = os.path.join(os.path.dirname(__file__), 'fastshot', '__version__.py')
+    version_dict = {}
     with open(version_file, 'r', encoding='utf-8') as f:
-        exec(f.read())
-    print("setting up ", locals()['__version__'])
-    return locals()['__version__']
+        exec(f.read(), version_dict)
+    print("setting up ", version_dict['__version__'])
+    return version_dict['__version__']
 
 setup(
     name='fastshot',
