@@ -134,6 +134,13 @@ class QuickNotesUI:
                     print("DEBUG: Cloud index is newer, updating local cache")
                     # Update local cache with cloud index
                     self.cache_manager.update_cache_index(cloud_index)
+                    
+                    # Check if any notes need to be refreshed from cloud
+                    refreshed_notes = self._refresh_outdated_notes()
+                    
+                    # Check if currently opened note needs refresh (only if not already refreshed)
+                    self._refresh_current_note_if_outdated(refreshed_notes)
+                    
                     self._show_status("Cache updated from cloud")
                 else:
                     print("DEBUG: Local cache is up to date")
@@ -149,6 +156,90 @@ class QuickNotesUI:
         except Exception as e:
             print(f"Error checking sync status: {e}")
             self._show_status("Error checking sync status", error=True)
+    
+    def _refresh_outdated_notes(self):
+        """Refresh outdated notes from cloud automatically."""
+        try:
+            print("DEBUG: Checking for outdated notes to refresh...")
+            
+            if not self.notes_manager:
+                return []
+            
+            # Get sync status for all notes
+            sync_status_dict = self.notes_manager.check_notes_sync_status()
+            
+            # Find notes that need refresh
+            outdated_notes = []
+            for note_id, status_info in sync_status_dict.items():
+                if status_info.get("needs_refresh", False):
+                    outdated_notes.append(note_id)
+            
+            refreshed_notes = []
+            if outdated_notes:
+                print(f"DEBUG: Found {len(outdated_notes)} outdated notes, refreshing...")
+                
+                # Refresh each outdated note
+                for note_id in outdated_notes:
+                    try:
+                        success = self.notes_manager.refresh_note_from_cloud(note_id)
+                        if success:
+                            print(f"DEBUG: Successfully refreshed note {note_id[:8]}...")
+                            refreshed_notes.append(note_id)
+                        else:
+                            print(f"DEBUG: Failed to refresh note {note_id[:8]}...")
+                    except Exception as e:
+                        print(f"DEBUG: Error refreshing note {note_id[:8]}...: {e}")
+                
+                self._show_status(f"Refreshed {len(refreshed_notes)} outdated notes")
+            else:
+                print("DEBUG: No outdated notes found")
+                
+            return refreshed_notes
+                
+        except Exception as e:
+            print(f"Error refreshing outdated notes: {e}")
+            return []
+    
+    def _refresh_current_note_if_outdated(self, refreshed_notes=None):
+        """Refresh currently opened note if it's outdated."""
+        try:
+            if not self.current_note_id or not self.notes_manager:
+                return
+            
+            print(f"DEBUG: Checking if current note {self.current_note_id[:8]}... needs refresh...")
+            
+            # If this note was already refreshed in batch, just reload the content
+            if refreshed_notes and self.current_note_id in refreshed_notes:
+                print(f"DEBUG: Current note {self.current_note_id[:8]}... was already refreshed, reloading content...")
+                self._load_note_content(self.current_note_id)
+                self._show_status("Current note updated from cloud")
+                print(f"DEBUG: Successfully reloaded current note content")
+                return
+            
+            # Get sync status for current note
+            sync_status_dict = self.notes_manager.check_notes_sync_status()
+            current_note_status = sync_status_dict.get(self.current_note_id, {})
+            
+            if current_note_status.get("needs_refresh", False):
+                print(f"DEBUG: Current note {self.current_note_id[:8]}... is outdated, refreshing...")
+                
+                # Refresh the note from cloud
+                success = self.notes_manager.refresh_note_from_cloud(self.current_note_id)
+                
+                if success:
+                    # Reload the note content in the editor
+                    self._load_note_content(self.current_note_id)
+                    self._show_status("Current note updated from cloud")
+                    print(f"DEBUG: Successfully refreshed and reloaded current note")
+                else:
+                    print(f"DEBUG: Failed to refresh current note")
+                    self._show_status("Failed to update current note", error=True)
+            else:
+                print(f"DEBUG: Current note is up to date")
+                
+        except Exception as e:
+            print(f"Error refreshing current note: {e}")
+            self._show_status("Error updating current note", error=True)
     
     def _show_status(self, message: str, error: bool = False):
         """Show status message in the status label."""
@@ -542,11 +633,11 @@ class QuickNotesUI:
         
         status_map = {
             "new": "🆕 New",
-            "updated": "🔄 Updated", 
-            "current": "�?Current",
+            "updated": "🔴 Outdated",  # Changed to show outdated status in red
+            "current": "✅Current",
             "local_only": "📱 Local",
-            "syncing": "�?Syncing",
-            "unknown": "�?Unknown"
+            "syncing": "⏳Syncing",
+            "unknown": "❓Unknown"
         }
         
         return status_map.get(status, "�?Unknown")
