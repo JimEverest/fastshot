@@ -52,14 +52,15 @@ class NotesManager:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             note_id = f"{timestamp}_{short_code}"
             
-            # Create note data structure
+            # Create note data structure with timezone-aware timestamps
+            now_utc = datetime.now(timezone.utc).isoformat()
             note_data = {
                 "id": note_id,
                 "title": title.strip(),
                 "content": content,
                 "short_code": short_code,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": now_utc,
+                "updated_at": now_utc,
                 "tags": tags or [],
                 "metadata": {
                     "word_count": len(content.split()) if content else 0,
@@ -113,9 +114,38 @@ class NotesManager:
                     return note_data
                 else:
                     print(f"Warning: Invalid note data structure for {note_id}")
-                    return None
+                    # Continue to try cloud download even if local file is corrupted
             
-            print(f"Note not found: {note_id}")
+            # If not found locally, try to download from cloud
+            print(f"Note not found locally: {note_id}, attempting to download from cloud...")
+            
+            if self.cloud_sync:
+                try:
+                    # Download note from cloud
+                    cloud_note_data = self.cloud_sync.load_note_from_cloud(note_id)
+                    
+                    if cloud_note_data:
+                        # Validate cloud data
+                        if self._validate_note_data(cloud_note_data):
+                            # Save to local cache for future access
+                            print(f"Downloaded note from cloud: {note_id}, saving to local cache...")
+                            with open(local_path, 'w', encoding='utf-8') as f:
+                                json.dump(cloud_note_data, f, indent=2, ensure_ascii=False)
+                            
+                            print(f"Note successfully downloaded and cached: {note_id}")
+                            return cloud_note_data
+                        else:
+                            print(f"Warning: Invalid note data structure from cloud for {note_id}")
+                    else:
+                        print(f"Note not found in cloud: {note_id}")
+                
+                except Exception as e:
+                    print(f"Error downloading note from cloud: {e}")
+                    # Continue to return None if cloud download fails
+            else:
+                print("Cloud sync not available, cannot download remote note")
+            
+            print(f"Note not found anywhere: {note_id}")
             return None
             
         except Exception as e:
@@ -159,8 +189,8 @@ class NotesManager:
             if tags is not None:
                 note_data["tags"] = tags
             
-            # Update timestamp
-            note_data["updated_at"] = datetime.now().isoformat()
+            # Update timestamp with timezone-aware UTC time
+            note_data["updated_at"] = datetime.now(timezone.utc).isoformat()
             
             # Validate updated data
             if not self._validate_note_data(note_data):
@@ -232,17 +262,21 @@ class NotesManager:
         """
         try:
             # Performance optimization: Use cached index if available (same as search_notes)
-            if hasattr(self.app, 'notes_cache'):
+            if hasattr(self.app, 'notes_cache') and self.app.notes_cache is not None:
                 cache_manager = self.app.notes_cache
-                cached_index = cache_manager.get_cached_index()
-                cached_notes = cached_index.get("notes", [])
-                
-                # If cache has notes, use them for the list
-                if cached_notes:
-                    print(f"DEBUG: Using cached index with {len(cached_notes)} notes for list_notes")
-                    notes = cached_notes.copy()
-                else:
-                    print("DEBUG: Cache is empty, falling back to local files")
+                try:
+                    cached_index = cache_manager.get_cached_index()
+                    cached_notes = cached_index.get("notes", [])
+                    
+                    # If cache has notes, use them for the list
+                    if cached_notes:
+                        print(f"DEBUG: Using cached index with {len(cached_notes)} notes for list_notes")
+                        notes = cached_notes.copy()
+                    else:
+                        print("DEBUG: Cache is empty, falling back to local files")
+                        notes = self._load_notes_from_local_files()
+                except Exception as e:
+                    print(f"DEBUG: Cache error, falling back to local files: {e}")
                     notes = self._load_notes_from_local_files()
             else:
                 print("DEBUG: No cache manager available, using local files only")
@@ -606,6 +640,40 @@ class NotesManager:
         matches = sum(1 for char in query if char in text)
         return matches >= len(query) * 0.7
     
+    def _parse_timestamp_to_utc(self, timestamp_str: str) -> datetime:
+        """
+        Parse timestamp string to timezone-aware UTC datetime.
+        
+        Args:
+            timestamp_str: Timestamp string in various formats
+            
+        Returns:
+            datetime: Timezone-aware datetime in UTC
+        """
+        if not timestamp_str:
+            return datetime.now(timezone.utc)
+        
+        try:
+            # Handle different timestamp formats
+            timestamp_str = timestamp_str.strip()
+            
+            # Convert 'Z' suffix to '+00:00' for ISO format compatibility
+            if timestamp_str.endswith('Z'):
+                timestamp_str = timestamp_str[:-1] + '+00:00'
+            
+            # Try to parse as ISO format with timezone
+            if '+' in timestamp_str or timestamp_str.endswith('Z'):
+                return datetime.fromisoformat(timestamp_str)
+            
+            # If no timezone info, assume it's a naive datetime and add UTC timezone
+            naive_dt = datetime.fromisoformat(timestamp_str)
+            return naive_dt.replace(tzinfo=timezone.utc)
+            
+        except Exception as e:
+            print(f"Warning: Failed to parse timestamp '{timestamp_str}': {e}")
+            # Return current time as fallback
+            return datetime.now(timezone.utc)
+    
     def _load_search_history(self):
         """Load search history from file."""
         try:
@@ -722,6 +790,175 @@ class NotesManager:
                 "error": f"Failed to get sync status: {e}",
                 "sync_health": "error"
             }
+    
+    def check_notes_sync_status(self) -> Dict[str, Dict[str, Any]]:
+        """
+        检查所有笔记的云端同步状态
+        
+        Returns:
+            Dict[note_id, status_info]: 每个笔记的状态信息
+            status_info包含: status, cloud_updated_at, local_updated_at, needs_refresh
+        """
+        try:
+            print("DEBUG: Checking notes sync status...")
+            
+            # 获取云端索引
+            cloud_index = None
+            if self.cloud_sync:
+                try:
+                    cloud_index = self.cloud_sync.load_notes_overall_index()
+                    print(f"DEBUG: Loaded cloud index with {len(cloud_index.get('notes', [])) if cloud_index else 0} notes")
+                except Exception as e:
+                    print(f"DEBUG: Failed to load cloud index: {e}")
+            
+            # 获取本地缓存索引
+            local_index = None
+            if hasattr(self.app, 'notes_cache'):
+                try:
+                    cache_manager = self.app.notes_cache
+                    local_index = cache_manager.get_cached_index()
+                    print(f"DEBUG: Loaded local index with {len(local_index.get('notes', [])) if local_index else 0} notes")
+                except Exception as e:
+                    print(f"DEBUG: Failed to load local index: {e}")
+            
+            # 获取本地文件列表
+            local_files = self._load_notes_from_local_files()
+            local_files_dict = {note['id']: note for note in local_files}
+            print(f"DEBUG: Found {len(local_files)} local note files")
+            
+            # 创建状态字典
+            status_dict = {}
+            
+            # 处理云端笔记
+            if cloud_index and cloud_index.get('notes'):
+                for cloud_note in cloud_index['notes']:
+                    note_id = cloud_note.get('id')
+                    if not note_id:
+                        continue
+                    
+                    cloud_updated_at = cloud_note.get('updated_at', '')
+                    
+                    # 检查本地是否存在
+                    local_note = local_files_dict.get(note_id)
+                    local_updated_at = local_note.get('updated_at', '') if local_note else ''
+                    
+                    # 确定状态
+                    if not local_note:
+                        # 云端有，本地没有
+                        status = "new"
+                        needs_refresh = True
+                    else:
+                        # 比较时间戳
+                        try:
+                            # 标准化时间戳格式，确保都是timezone-aware的
+                            cloud_time = self._parse_timestamp_to_utc(cloud_updated_at)
+                            local_time = self._parse_timestamp_to_utc(local_updated_at)
+                            
+                            if cloud_time > local_time:
+                                status = "updated"
+                                needs_refresh = True
+                            else:
+                                status = "current"
+                                needs_refresh = False
+                        except Exception as e:
+                            print(f"DEBUG: Error comparing timestamps for {note_id}: {e}")
+                            print(f"DEBUG: Cloud time: {cloud_updated_at}, Local time: {local_updated_at}")
+                            status = "unknown"
+                            needs_refresh = True
+                    
+                    status_dict[note_id] = {
+                        "status": status,
+                        "cloud_updated_at": cloud_updated_at,
+                        "local_updated_at": local_updated_at,
+                        "needs_refresh": needs_refresh,
+                        "cloud_exists": True,
+                        "local_exists": local_note is not None
+                    }
+            
+            # 处理仅存在于本地的笔记
+            for note_id, local_note in local_files_dict.items():
+                if note_id not in status_dict:
+                    status_dict[note_id] = {
+                        "status": "local_only",
+                        "cloud_updated_at": "",
+                        "local_updated_at": local_note.get('updated_at', ''),
+                        "needs_refresh": False,
+                        "cloud_exists": False,
+                        "local_exists": True
+                    }
+            
+            print(f"DEBUG: Generated status for {len(status_dict)} notes")
+            return status_dict
+            
+        except Exception as e:
+            print(f"Error checking notes sync status: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+    
+    def refresh_note_from_cloud(self, note_id: str) -> bool:
+        """
+        强制从云端刷新指定笔记
+        
+        Args:
+            note_id: 笔记ID
+            
+        Returns:
+            bool: 刷新成功返回True
+        """
+        try:
+            print(f"DEBUG: Refreshing note from cloud: {note_id}")
+            
+            if not self.cloud_sync:
+                print("Cloud sync not available")
+                return False
+            
+            # 从云端下载笔记
+            cloud_note_data = self.cloud_sync.load_note_from_cloud(note_id)
+            
+            if not cloud_note_data:
+                print(f"Note not found in cloud: {note_id}")
+                return False
+            
+            # 验证数据
+            if not self._validate_note_data(cloud_note_data):
+                print(f"Invalid note data from cloud: {note_id}")
+                return False
+            
+            # 保存到本地
+            local_path = self.notes_dir / f"{note_id}.json"
+            with open(local_path, 'w', encoding='utf-8') as f:
+                json.dump(cloud_note_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"Successfully refreshed note from cloud: {note_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error refreshing note from cloud: {e}")
+            return False
+    
+    def get_note_status_display(self, status_info: Dict[str, Any]) -> str:
+        """
+        获取笔记状态的显示文本
+        
+        Args:
+            status_info: 从check_notes_sync_status返回的状态信息
+            
+        Returns:
+            str: 状态显示文本
+        """
+        status = status_info.get("status", "unknown")
+        
+        status_map = {
+            "new": "🆕 New",
+            "updated": "🔄 Updated", 
+            "current": "✅ Current",
+            "local_only": "📱 Local",
+            "syncing": "⏳ Syncing",
+            "unknown": "❓ Unknown"
+        }
+        
+        return status_map.get(status, "❓ Unknown")
     
     def clear_search_history(self):
         """Clear all search history."""
