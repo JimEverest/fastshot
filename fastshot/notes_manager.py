@@ -531,7 +531,7 @@ class NotesManager:
         sanitized = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
         
         # Limit length to prevent excessive memory usage
-        max_length = 10000  # 10KB limit for content
+        max_length = 1000000  # 1000KB limit for content
         if len(sanitized) > max_length:
             sanitized = sanitized[:max_length]
         
