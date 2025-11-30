@@ -60,6 +60,21 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 - **PowerExtract**: AI-powered content extraction from images
 - **LLM Settings**: Configurable LLM integration
 
+### Quick Cloud Hyder - Advanced File Sync
+- **🔐 Quick Cloud Hyder**: Instantly encrypt files/folders and upload to cloud storage
+  - Press Ctrl+Alt alternately 8 times to activate
+  - Reads file paths from clipboard
+  - Encrypts and disguises files as PNG images
+  - Uploads to secure cloud storage with tracking
+- **📥 Quick Cloud Retriver**: Download and decrypt the last hidden file
+  - Press Ctrl+Win alternately 8 times to activate
+  - Automatically retrieves last uploaded file
+  - Decrypts and extracts original content
+  - Opens output folder and copies path to clipboard
+- **🔒 Security Features**: AES-256 encryption, file disguising, secure cleanup
+- **☁️ Cloud Integration**: Seamless AWS S3 integration with existing cloud sync
+- **📱 User Experience**: Progress feedback, error handling, multi-format support
+
 ### Session Management & Optimized Cloud Sync
 - **Session Save/Load**: Save and restore all floating image windows with metadata
 - **Enhanced Metadata**: Add descriptions, tags, colors, and classifications to sessions
@@ -224,6 +239,10 @@ hotkey_reposition_windows = <shift>+<f3>    # Reposition all image windows to or
 hotkey_save_session = <shift>+<f4>          # Save current session to file
 hotkey_load_session = <shift>+<f5>          # Load session from file
 hotkey_session_manager = <shift>+<f6>       # Open session manager UI
+
+# Quick Cloud Hyder - Advanced file sync
+# Quick Cloud Hyder: Press Ctrl+Alt alternately 8 times (Ctrl→Alt→Ctrl→Alt→Ctrl→Alt→Ctrl→Alt)
+# Quick Cloud Retriver: Press Ctrl+Win alternately 8 times (Ctrl→Win→Ctrl→Win→Ctrl→Win→Ctrl→Win)
 ```
 
 

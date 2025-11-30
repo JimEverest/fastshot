@@ -24,8 +24,8 @@ setup(
         "Pillow",
         "pyperclip",
         "pywin32",
-        "paddleocr",
-        "paddlepaddle",
+        "rapidocr>=3.0.0",
+        "onnxruntime",
         "customtkinter",
         "flask",
         "configparser",
@@ -34,9 +34,10 @@ setup(
     ],
     package_data={
         'fastshot': [
-            'config.ini', 
+            'config.ini',
             '_config_reset.ini',
             'plugins/*',
+            'resources/*.onnx',
             'web/templates/*.html',
             'web/static/css/*.css',
             'web/static/js/*.js',
