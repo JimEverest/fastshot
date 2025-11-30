@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Fastshot is a GenAI-powered desktop screenshot application for Windows. It provides hotkey-driven screenshot capture, annotation, AI analysis, local OCR, and encrypted AWS S3 cloud sync.
 
-**Version**: 1.5.2
+**Version**: 1.5.3
 **Entry Point**: `fastshot/main.py` → `SnipasteApp` class
 
 ## Build & Run Commands

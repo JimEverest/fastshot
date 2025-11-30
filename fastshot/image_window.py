@@ -274,7 +274,6 @@ class ImageWindow:
             ("OCR", "🧾", "[O]", self.ocr),
             ("Ask", "💬", "[Q]", self.open_ask_dialog),
             ("PowerExtract", "🔍", "", self.power_extract),  # No shortcut for this one
-            ("Close All", "🗑️", "[A]", self.close_all),  # New close all function
         ]
 
         # Store commands for keyboard shortcuts (update the instance variable)
@@ -288,7 +287,6 @@ class ImageWindow:
             't': self.text,
             'o': self.ocr,
             'q': self.open_ask_dialog,
-            'a': self.close_all,  # Add shortcut for close all
         }
         print(f"📝 Menu shortcuts updated: {list(self.menu_shortcuts.keys())}")
 
@@ -323,67 +321,6 @@ class ImageWindow:
         # Update indicator if windows are hidden and this window was part of the count
         if hasattr(self.app, 'all_windows_hidden') and self.app.all_windows_hidden and was_hidden:
              self.app.update_indicator_on_close()
-
-    def close_all(self):
-        """Close all image windows with confirmation dialog"""
-        try:
-            # Count active windows
-            active_windows = [w for w in self.app.windows if w.img_window.winfo_exists()]
-            window_count = len(active_windows)
-            
-            if window_count == 0:
-                messagebox.showinfo(
-                    "No Windows", 
-                    "There are no image windows to close.",
-                    parent=self.img_window
-                )
-                return
-            
-            # Show confirmation dialog
-            message = f"Are you sure you want to close all {window_count} image window{'s' if window_count > 1 else ''}?"
-            title = "Close All Windows"
-            
-            result = messagebox.askyesno(
-                title, 
-                message,
-                parent=self.img_window,
-                icon='warning'
-            )
-            
-            if result:
-                # Close all windows
-                windows_to_close = active_windows.copy()  # Create a copy to avoid iteration issues
-                closed_count = 0
-                
-                for window in windows_to_close:
-                    try:
-                        if window.img_window.winfo_exists():
-                            window.close()
-                            closed_count += 1
-                    except Exception as e:
-                        print(f"Error closing window: {e}")
-                        continue
-                
-                print(f"✅ Successfully closed {closed_count} image windows")
-                
-                # Show completion message if some windows were closed
-                if closed_count > 0:
-                    # Use a simple print instead of messagebox since windows might be gone
-                    print(f"🗑️ Closed {closed_count} image window{'s' if closed_count > 1 else ''}")
-            else:
-                print("❌ Close all operation cancelled by user")
-                
-        except Exception as e:
-            print(f"💥 Error in close_all: {e}")
-            # Show error message to user
-            try:
-                messagebox.showerror(
-                    "Error",
-                    f"An error occurred while closing windows:\n{str(e)}",
-                    parent=self.img_window
-                )
-            except:
-                print(f"Could not show error dialog: {e}")
 
     def save_as(self):
         file_path = filedialog.asksaveasfilename(

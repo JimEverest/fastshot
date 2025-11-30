@@ -24,7 +24,7 @@ import threading
 import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), 'web'))
 # from fastshot.web.web_app import app as flask_app 
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from PIL import Image, UnidentifiedImageError
 
 # print(f"flask_app: {flask_app}")
@@ -239,7 +239,8 @@ class SnipasteApp:
                 'hotkey_save_session': '<shift>+<f4>',
                 'hotkey_load_session': '<shift>+<f5>',
                 'hotkey_session_manager': '<shift>+<f6>',
-                'hotkey_quick_notes': '<shift>+<f7>'
+                'hotkey_quick_notes': '<shift>+<f7>',
+                'hotkey_recover_cache': '<shift>+<f12>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -284,7 +285,8 @@ class SnipasteApp:
             'hotkey_save_session': 'Save Current Session',
             'hotkey_load_session': 'Load Session',
             'hotkey_session_manager': 'Open Session Manager',
-            'hotkey_quick_notes': 'Open Quick Notes'
+            'hotkey_quick_notes': 'Open Quick Notes',
+            'hotkey_recover_cache': 'Recover from Temp Cache'
         }
         for key, desc in shortcut_descriptions.items():
             value = self.config['Shortcuts'].get(key, '')
@@ -372,6 +374,9 @@ class SnipasteApp:
             self.show_visibility_indicator(hidden_count)
 
         self.windows.append(window)
+
+        # Auto-save to temp cache after new window is created
+        self.session_manager.save_temp_cache()
 
     def load_image_from_dialog(self):
         """Opens a file dialog to load an image and creates an ImageWindow."""
@@ -554,6 +559,50 @@ class SnipasteApp:
     def load_session_dialog(self):
         """Shows dialog to load a session."""
         self.session_manager.load_session_with_dialog()
+
+    def recover_from_cache(self):
+        """Recovers windows from temp cache with confirmation dialog."""
+        try:
+            # Check if temp cache exists
+            if not self.session_manager.has_temp_cache():
+                messagebox.showinfo(
+                    "No Cache Found",
+                    "No temp cache file found.\n\n"
+                    "Temp cache is automatically saved when you take screenshots."
+                )
+                return
+
+            # Get current window count
+            current_count = len([w for w in self.windows if w.img_window.winfo_exists()])
+
+            # Show confirmation dialog
+            message = "Recover windows from temp cache?\n\n"
+            if current_count > 0:
+                message += f"Current windows ({current_count}) will be kept.\n"
+                message += "Cached windows will be added to existing ones."
+            else:
+                message += "This will restore your last cached session."
+
+            result = messagebox.askyesno(
+                "Recover from Cache",
+                message,
+                icon='question'
+            )
+
+            if result:
+                success, loaded_count, msg = self.session_manager.load_temp_cache()
+                if success:
+                    messagebox.showinfo("Recovery Successful", msg)
+                    print(f"[TempCache] {msg}")
+                else:
+                    messagebox.showwarning("Recovery Failed", msg)
+                    print(f"[TempCache] {msg}")
+            else:
+                print("[TempCache] Recovery cancelled by user")
+
+        except Exception as e:
+            print(f"[TempCache] Error in recover_from_cache: {e}")
+            messagebox.showerror("Error", f"Failed to recover from cache:\n{str(e)}")
     
     def open_session_manager(self):
         """Opens the session manager UI."""

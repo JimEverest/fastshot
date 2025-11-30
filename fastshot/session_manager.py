@@ -584,4 +584,104 @@ class SessionManager:
             return list(self.session_dir.glob("*.fastshot"))
         except Exception as e:
             print(f"Error getting session files: {e}")
-            return [] 
+            return []
+
+    # ============== Temp Cache Methods ==============
+
+    def get_temp_cache_path(self):
+        """Returns the path to the temp cache file."""
+        return self.session_dir / "temp_cache.fastshot"
+
+    def save_temp_cache(self):
+        """
+        Saves current session state to temp cache file in background.
+        This is called automatically on screenshot/window changes.
+        """
+        import threading
+
+        # Run save in background thread to avoid blocking UI
+        thread = threading.Thread(target=self._save_temp_cache_impl, daemon=True)
+        thread.start()
+
+    def _save_temp_cache_impl(self):
+        """Implementation of temp cache save (runs in background thread)."""
+        try:
+            # Check if there are any windows to save
+            if not self.app.windows:
+                return
+
+            temp_cache_path = self.get_temp_cache_path()
+
+            # Prepare session data (similar to save_session but simplified)
+            session_data = {
+                "version": "1.0",
+                "timestamp": datetime.now().isoformat(),
+                "is_temp_cache": True,
+                "windows": []
+            }
+
+            # Collect data from all active image windows
+            for i, window in enumerate(self.app.windows):
+                try:
+                    if not window.img_window.winfo_exists():
+                        continue
+
+                    window_data = self.serialize_window(window, i)
+                    if window_data:
+                        session_data["windows"].append(window_data)
+                except Exception as e:
+                    print(f"[TempCache] Error serializing window {i}: {e}")
+                    continue
+
+            # Only save if we have windows
+            if session_data["windows"]:
+                with open(temp_cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(session_data, f, ensure_ascii=False)
+                print(f"[TempCache] Auto-saved {len(session_data['windows'])} window(s)")
+
+        except Exception as e:
+            print(f"[TempCache] Error saving temp cache: {e}")
+
+    def has_temp_cache(self):
+        """Checks if temp cache file exists."""
+        return self.get_temp_cache_path().exists()
+
+    def load_temp_cache(self):
+        """
+        Loads temp cache and merges with existing windows (doesn't close them).
+        Returns tuple: (success: bool, loaded_count: int, message: str)
+        """
+        try:
+            temp_cache_path = self.get_temp_cache_path()
+
+            if not temp_cache_path.exists():
+                return False, 0, "No temp cache file found."
+
+            with open(temp_cache_path, 'r', encoding='utf-8') as f:
+                session_data = json.load(f)
+
+            # Validate
+            if not self.validate_session_data(session_data):
+                return False, 0, "Invalid temp cache data format."
+
+            # Get cache timestamp
+            cache_time = session_data.get("timestamp", "Unknown")
+
+            # Load windows (merge - don't close existing)
+            loaded_count = 0
+            for window_data in session_data.get("windows", []):
+                try:
+                    if self.deserialize_window(window_data):
+                        loaded_count += 1
+                except Exception as e:
+                    print(f"[TempCache] Error loading window: {e}")
+                    continue
+
+            if loaded_count > 0:
+                return True, loaded_count, f"Recovered {loaded_count} window(s) from cache ({cache_time})"
+            else:
+                return False, 0, "No windows could be loaded from cache."
+
+        except Exception as e:
+            print(f"[TempCache] Error loading temp cache: {e}")
+            return False, 0, f"Error loading cache: {str(e)}" 
