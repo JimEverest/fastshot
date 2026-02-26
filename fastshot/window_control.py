@@ -268,6 +268,10 @@ class HotkeyListener:
             keyboard.HotKey.parse(shortcuts.get('hotkey_quick_notes', '<shift>+<f7>')),
             self.on_quick_notes
         )
+        self.hotkey_image_gallery = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_image_gallery', '<shift>+<f8>')),
+            self.on_image_gallery
+        )
         self.hotkey_recover_cache = keyboard.HotKey(
             keyboard.HotKey.parse(shortcuts.get('hotkey_recover_cache', '<shift>+<f12>')),
             self.on_recover_cache
@@ -338,6 +342,7 @@ class HotkeyListener:
         self.hotkey_load_session.press(self.listener.canonical(key))
         self.hotkey_session_manager.press(self.listener.canonical(key))
         self.hotkey_quick_notes.press(self.listener.canonical(key))
+        self.hotkey_image_gallery.press(self.listener.canonical(key))
         self.hotkey_recover_cache.press(self.listener.canonical(key))
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
@@ -360,6 +365,7 @@ class HotkeyListener:
         self.hotkey_load_session.release(self.listener.canonical(key))
         self.hotkey_session_manager.release(self.listener.canonical(key))
         self.hotkey_quick_notes.release(self.listener.canonical(key))
+        self.hotkey_image_gallery.release(self.listener.canonical(key))
         self.hotkey_recover_cache.release(self.listener.canonical(key))
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
@@ -532,6 +538,19 @@ class HotkeyListener:
                 print("ERROR: app does not have open_quick_notes method")
         except Exception as e:
             print(f"ERROR in on_quick_notes: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def on_image_gallery(self):
+        """Callback for the image gallery hotkey."""
+        print("Image gallery hotkey activated")
+        try:
+            if hasattr(self.app, 'open_image_gallery'):
+                self.root.after(0, self.app.open_image_gallery)
+            else:
+                print("ERROR: app does not have open_image_gallery method")
+        except Exception as e:
+            print(f"ERROR in on_image_gallery: {e}")
             import traceback
             traceback.print_exc()
 

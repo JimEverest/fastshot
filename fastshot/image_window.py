@@ -164,6 +164,7 @@ class ImageWindow:
         self.is_dialog_open = False  # 用于禁用截图交互
         self.llm_extractor = LLMExtractor()
         self.is_hidden = False # Track visibility state
+        self.gallery_hidden = False  # Track if hidden by gallery visibility controls
         self.zoom_indicator_ref = None # Reference to the zoom indicator
         self.context_menu_active = False  # Track if context menu is active
         self.context_menu = None  # Store reference to context menu

@@ -240,6 +240,7 @@ class SnipasteApp:
                 'hotkey_load_session': '<shift>+<f5>',
                 'hotkey_session_manager': '<shift>+<f6>',
                 'hotkey_quick_notes': '<shift>+<f7>',
+                'hotkey_image_gallery': '<shift>+<f8>',  # Open fullscreen gallery view
                 'hotkey_recover_cache': '<shift>+<f12>'
             }
             config['ScreenPen'] = {
@@ -286,6 +287,7 @@ class SnipasteApp:
             'hotkey_load_session': 'Load Session',
             'hotkey_session_manager': 'Open Session Manager',
             'hotkey_quick_notes': 'Open Quick Notes',
+            'hotkey_image_gallery': 'Open Image Gallery (Fullscreen Thumbnail View)',
             'hotkey_recover_cache': 'Recover from Temp Cache'
         }
         for key, desc in shortcut_descriptions.items():
@@ -418,18 +420,25 @@ class SnipasteApp:
 
     # --- New Methods for Visibility Toggle ---
     def toggle_all_image_windows_visibility(self):
-        """Toggles the visibility of all active ImageWindow instances."""
+        """Toggles the visibility of all active ImageWindow instances.
+
+        Respects gallery_hidden: windows hidden by the gallery's visibility
+        controls will NOT be shown by this toggle.
+        """
         self.all_windows_hidden = not self.all_windows_hidden
         hidden_count = 0
 
-        # Iterate over a copy in case the list is modified during iteration (e.g., by closing)
         for window in list(self.windows):
             if window.img_window.winfo_exists():
+                # Skip windows that were explicitly hidden by the gallery
+                if getattr(window, 'gallery_hidden', False):
+                    hidden_count += 1
+                    continue
+
                 if self.all_windows_hidden:
                     window.hide()
                     hidden_count += 1
                 else:
-                    # Only show if it was previously hidden by this toggle
                     if window.is_hidden:
                         window.show()
 
@@ -438,11 +447,12 @@ class SnipasteApp:
             self.show_visibility_indicator(hidden_count)
             print(f"Hid {hidden_count} windows.")
         else:
-            # Ensure all windows are shown if toggle is off
             if not self.all_windows_hidden:
                  for window in list(self.windows):
                      if window.img_window.winfo_exists() and window.is_hidden:
-                         window.show()
+                         # Don't show windows hidden by gallery
+                         if not getattr(window, 'gallery_hidden', False):
+                             window.show()
             self.hide_visibility_indicator()
             print("Showing all windows.")
 
@@ -664,6 +674,26 @@ class SnipasteApp:
             # Update Screen Pen with new config
             self.screen_pen.update_config(self.config)
             print("Screen Pen configuration updated")
+
+    def open_image_gallery(self):
+        """Opens the fullscreen image gallery view."""
+        try:
+            print("DEBUG: open_image_gallery called")
+
+            from fastshot.image_window_gallery import ImageWindowGallery
+
+            # Create and show gallery
+            gallery = ImageWindowGallery(self)
+            print("DEBUG: ImageWindowGallery created and shown")
+
+        except ImportError as e:
+            print(f"ERROR: Failed to import ImageWindowGallery: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            print(f"ERROR in open_image_gallery: {e}")
+            import traceback
+            traceback.print_exc()
 
 def main():
     app = SnipasteApp()
