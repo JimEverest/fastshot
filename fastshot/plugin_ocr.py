@@ -1,6 +1,6 @@
 from rapidocr import RapidOCR, EngineType
 from PIL import Image
-import win32clipboard
+from fastshot.app_platform import clipboard as _clipboard
 import tkinter as tk
 import numpy as np
 import os
@@ -113,10 +113,10 @@ class PluginOCR:
         return '\n'.join(result_lines)
 
     def copy_to_clipboard(self, text):
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
-        win32clipboard.CloseClipboard()
+        try:
+            _clipboard().copy_text(text)
+        except Exception as e:
+            print(f"Error copying to clipboard: {e}")
 
     def show_message(self, message, parent):
         label = tk.Label(parent, text=message, bg="yellow", fg="black", font=("Helvetica", 10))

@@ -1,5 +1,6 @@
 # fastshot/image_window_gallery.py
 
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk, ImageDraw
@@ -216,6 +217,27 @@ class ImageWindowGallery(tk.Toplevel):
         bar.pack(fill="x", padx=20, pady=(5, 20))
         bar.pack_propagate(False)
 
+        # On macOS, tk.Button ignores fg/bg — use ttk with custom styles
+        _is_mac = sys.platform == "darwin"
+
+        def _btn(parent, text, command, bg="#3a3a3a", fg="#ffffff"):
+            """Create a styled button that works on both macOS and Windows."""
+            if _is_mac:
+                style_name = f"{text.replace(' ', '')}.TButton"
+                style = ttk.Style()
+                style.configure(style_name, background=bg, foreground=fg,
+                                padding=(10, 4), font=("Arial", 11))
+                style.map(style_name,
+                          background=[("active", bg)],
+                          foreground=[("active", fg)])
+                btn = ttk.Button(parent, text=text, command=command,
+                                 style=style_name, cursor="hand2")
+            else:
+                btn = tk.Button(parent, text=text, command=command,
+                                bg=bg, fg=fg, relief="flat", padx=10,
+                                cursor="hand2")
+            return btn
+
         # Selection controls
         left = tk.Frame(bar, bg="#2a2a2a")
         left.pack(side="left", padx=15, fill="y")
@@ -224,9 +246,7 @@ class ImageWindowGallery(tk.Toplevel):
         for text, cmd in [("Select All", self._select_all),
                           ("Deselect All", self._deselect_all),
                           ("Invert", self._invert_selection)]:
-            tk.Button(left, text=text, command=cmd, bg="#3a3a3a", fg="#ffffff",
-                      relief="flat", padx=10, cursor="hand2"
-                      ).pack(side="left", padx=4, pady=15)
+            _btn(left, text, cmd).pack(side="left", padx=4, pady=15)
         self._sel_label = tk.Label(left, text="Selected: 0", font=("Arial", 12),
                                    bg="#2a2a2a", fg="#4CAF50")
         self._sel_label.pack(side="left", padx=15)
@@ -241,9 +261,7 @@ class ImageWindowGallery(tk.Toplevel):
             ("Show All",           self._show_all,           "#8BC34A"),
             ("Hide All",           self._hide_all,           "#9E9E9E"),
         ]:
-            tk.Button(mid_sec, text=text, command=cmd, bg=color, fg="#ffffff",
-                      relief="flat", padx=10, cursor="hand2"
-                      ).pack(side="left", padx=4, pady=15)
+            _btn(mid_sec, text, cmd, bg=color).pack(side="left", padx=4, pady=15)
 
         # Action buttons
         right = tk.Frame(bar, bg="#2a2a2a")
@@ -253,12 +271,9 @@ class ImageWindowGallery(tk.Toplevel):
             ("Close Selected", self._action_close, "#f44336"),
             ("Save Selected",  self._action_save,  "#4CAF50"),
         ]:
-            tk.Button(right, text=text, command=cmd, bg=color, fg="#ffffff",
-                      relief="flat", padx=10, cursor="hand2"
-                      ).pack(side="left", padx=4, pady=15)
-        tk.Button(right, text="Close (ESC)", command=self._close_gallery,
-                  bg="#555555", fg="#ffffff", relief="flat", padx=10,
-                  cursor="hand2").pack(side="right", padx=4, pady=15)
+            _btn(right, text, cmd, bg=color).pack(side="left", padx=4, pady=15)
+        _btn(right, "Close (ESC)", self._close_gallery, bg="#555555"
+             ).pack(side="right", padx=4, pady=15)
 
     # --------------------------------------------------------- canvas helpers
     def _on_canvas_resize(self, event):

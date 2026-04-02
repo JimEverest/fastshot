@@ -9,53 +9,87 @@ _config = configparser.ConfigParser()
 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
 _config.read(config_path, encoding='utf-8')
 
-# _config = configparser.ConfigParser()
-# # 获取运行时路径
-# def get_resource_path(relative_path):
-#     """ Get absolute path to resource, works for both dev and PyInstaller bundled environments """
-#     try:
-#         # PyInstaller creates a temp folder and stores path in _MEIPASS
-#         base_path = sys._MEIPASS
-#     except Exception:
-#         base_path = os.path.abspath(".")
-#     resource_path=os.path.join(base_path, relative_path)
-#     print("-----------------------------------> resource_path: ",resource_path)
-#     return os.path.join(base_path, relative_path)
 
-# # 使用 get_resource_path 查找 config.ini
-# config_path = get_resource_path(os.path.join('fastshot', 'config.ini'))
-# _config.read(config_path, encoding='utf-8')
+def _cfg(key, section='GenAI'):
+    """Get config value from env var or config file, returns empty string if missing."""
+    return os.getenv(key.upper(), _config[section].get(key, '')).strip()
 
 
-# open ai
-OPENAI_TOKEN = os.getenv('OPENAI_TOKEN',_config['GenAI'].get('OPENAI_TOKEN'))
-OPENAI_TOKEN_URL = os.getenv('OPENAI_TOKEN_URL',_config['GenAI'].get('OPENAI_TOKEN_URL'))
-OPENAI_HEALTH_URL = os.getenv('OPENAI_HEALTH_URL',_config['GenAI'].get('OPENAI_HEALTH_URL'))
-OPENAI_MM_URL = os.getenv('OPENAI_MM_URL',_config['GenAI'].get('OPENAI_MM_URL'))
-OPENAI_CHATGPT_URL = os.getenv('OPENAI_CHATGPT_URL',_config['GenAI'].get('OPENAI_CHATGPT_URL'))
-OPENAI_USER_NAME = os.getenv('OPENAI_USER_NAME',_config['GenAI'].get('OPENAI_USER_NAME'))
-OPENAI_PASSWORD = os.getenv('OPENAI_PASSWORD',_config['GenAI'].get('OPENAI_PASSWORD'))
-OPENAI_APPLICATION_ID = os.getenv('OPENAI_APPLICATION_ID',_config['GenAI'].get('OPENAI_APPLICATION_ID'))
-OPENAI_APPLICATION_NAME = os.getenv('OPENAI_APPLICATION_NAME',_config['GenAI'].get('OPENAI_APPLICATION_NAME'))
-HEAD_TOKEN_KEY = os.getenv('HEAD_TOKEN_KEY',_config['GenAI'].get('HEAD_TOKEN_KEY'))
+# --- Detect whether GenAI is configured ---
+_genai_configured = bool(_cfg('openai_token') or (_cfg('openai_token_url') and _cfg('openai_mm_url')))
 
-# 实现ask函数
+# --- Detect whether PowerGenAI is configured ---
+_power_base_url = _config.get('PowerGenAI', '_base_url', fallback='').strip()
+_power_key = _config.get('PowerGenAI', 'key', fallback='').strip()
+_power_model = _config.get('PowerGenAI', '_model', fallback='').strip()
+_power_configured = bool(_power_base_url and _power_key and _power_model)
+
+# GenAI settings (enterprise proxy)
+OPENAI_TOKEN = _cfg('openai_token')
+OPENAI_TOKEN_URL = _cfg('openai_token_url')
+OPENAI_HEALTH_URL = _cfg('openai_health_url')
+OPENAI_MM_URL = _cfg('openai_mm_url')
+OPENAI_CHATGPT_URL = _cfg('openai_chat_url')
+OPENAI_USER_NAME = _cfg('openai_user_name')
+OPENAI_PASSWORD = _cfg('openai_password')
+OPENAI_APPLICATION_ID = _cfg('openai_application_id')
+OPENAI_APPLICATION_NAME = _cfg('openai_application_name')
+HEAD_TOKEN_KEY = _cfg('head_token_key') or 'Authorization'
+
+
 def ask(msgs):
-    # 检查OPENAI_TOKEN是否已经存在
+    """Main entry point: try GenAI first, fallback to PowerGenAI."""
+    # --- Fallback to PowerGenAI if GenAI is not configured ---
+    if not _genai_configured:
+        if _power_configured:
+            print("[GenAI] GenAI not configured, falling back to PowerGenAI")
+            return _ask_power(msgs)
+        else:
+            return "[Error] AI is not configured. Please set up [GenAI] or [PowerGenAI] in config.ini (Settings > GenAI)."
+
     _token = ""
-    
-    if OPENAI_TOKEN and OPENAI_TOKEN.strip():  # 优先从环境变量中取token
+    if OPENAI_TOKEN:
         _token = "Bearer " + OPENAI_TOKEN
     else:
-        # 如果没有找到环境变量中的token，尝试通过get_token获取
         _token = get_token()
     resp = ask_with_msgs(_token, msgs)
     return resp
-        
+
+
+def _ask_power(msgs):
+    """Fallback: use PowerGenAI (OpenRouter / OpenAI-compatible API)."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {_power_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = json.dumps({
+            "model": _power_model,
+            "messages": msgs,
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "max_tokens": 800,
+            "stream": False
+        })
+        response = requests.post(
+            f"{_power_base_url.rstrip('/')}/chat/completions",
+            headers=headers, data=payload, timeout=180
+        )
+        print("-" * 50)
+        print(response.text)
+        print("=" * 50)
+        res_json = response.json()
+        return res_json["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"PowerGenAI error: {e}")
+        return f"[Error] PowerGenAI request failed: {e}"
 
 def get_token():
-  url = OPENAI_TOKEN_URL
-  payload = json.dumps({
+    url = OPENAI_TOKEN_URL
+    if not url:
+        raise ValueError("GenAI token URL not configured. Please set openai_token_url in config.ini [GenAI] section.")
+
+    payload = json.dumps({
     "input_token_state": {
       "token_type": "CREDENTIAL",
       "username": OPENAI_USER_NAME,
@@ -64,24 +98,27 @@ def get_token():
     "output_token_state": {
       "token_type": "JWT"
     }
-  })
-  headers = {
-    'Content-Type': 'application/json'
-  }
+    })
+    headers = {
+        'Content-Type': 'application/json'
+    }
 
-  response = requests.request("POST", url, headers=headers, data=payload, verify=False)
+    response = requests.request("POST", url, headers=headers, data=payload, verify=False)
 
-  token_json=response.json()
+    token_json=response.json()
 
-  token = token_json["issued_token"]
+    token = token_json["issued_token"]
 
-  print(token)
-  print("~"*100)
-  return token
+    print(token)
+    print("~"*100)
+    return token
 
 
 def check_health():
     url = OPENAI_HEALTH_URL
+    if not url:
+        print("Health check URL not configured")
+        return "unconfigured"
     payload={}
     headers = {}
 

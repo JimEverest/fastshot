@@ -2,12 +2,24 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
-import win32clipboard
+import sys
 from pynput import keyboard
 import os
-import ctypes # Import ctypes if not already present
 import time # Add time import
 import threading
+
+from fastshot.__version__ import __version__ as _APP_VERSION
+
+# Platform-aware imports
+_IS_WINDOWS = os.name == 'nt'
+if _IS_WINDOWS:
+    try:
+        import ctypes
+    except ImportError:
+        pass
+
+# Import platform clipboard
+from fastshot.app_platform import clipboard as _clipboard
 
 from .paint_tool import PaintTool
 from .text_tool import TextTool
@@ -48,17 +60,22 @@ class ZoomIndicator(tk.Toplevel):
         # --- End Fade Out Logic ---
 
     def _set_click_through(self):
-        """Set WS_EX_TRANSPARENT style for click-through."""
+        """Set click-through style — platform-aware."""
         try:
-            hwnd = self.winfo_id()
-            # Get current extended window style
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
-            # Add WS_EX_LAYERED and WS_EX_TRANSPARENT styles
-            style = style | 0x80000 | 0x20 # WS_EX_LAYERED | WS_EX_TRANSPARENT
-            # Set the new extended window style
-            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
-            # Set initial layered window attributes (needed for alpha)
-            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(self.current_alpha * 255), 0x2) # LWA_ALPHA
+            if _IS_WINDOWS:
+                hwnd = self.winfo_id()
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+                style = style | 0x80000 | 0x20
+                ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
+                ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(self.current_alpha * 255), 0x2)
+            else:
+                # macOS: try using pyobjc to set ignoresMouseEvents
+                try:
+                    from fastshot.app_platform import window_control as _wc
+                    _wc().set_click_through(self, True)
+                except Exception:
+                    # Fallback: just keep the window non-interactive via tkinter
+                    pass
         except Exception as e:
             print(f"Error setting click-through for ZoomIndicator: {e}")
 
@@ -153,6 +170,10 @@ class ImageWindow:
         self.img_window.bind('<MouseWheel>', self.zoom)
         self.img_window.bind('<Enter>', self.activate_window)
 
+        # On macOS, set NSWindow level to floating so it stays above other apps
+        if sys.platform == 'darwin':
+            self.img_window.after(50, self._set_macos_floating_level)
+
         self.img_label = tk.Label(self.img_window, borderwidth=1, relief="solid")
         self.img_label.pack()
         self.update_image(img)
@@ -176,6 +197,28 @@ class ImageWindow:
         # Pre-start global keyboard listener for instant menu response
         self.setup_persistent_key_listener()
 
+    def _set_macos_floating_level(self):
+        """Set NSWindow level to floating so it stays above other apps on macOS."""
+        try:
+            from AppKit import NSApp, NSFloatingWindowLevel
+            # Find the NSWindow that corresponds to this tkinter Toplevel
+            self.img_window.update_idletasks()
+            for ns_window in NSApp.windows():
+                # Match by frame position
+                frame = ns_window.frame()
+                tk_x = self.img_window.winfo_x()
+                tk_y = self.img_window.winfo_y()
+                if abs(frame.origin.x - tk_x) < 5 and abs(frame.size.width - self.img_window.winfo_width()) < 5:
+                    ns_window.setLevel_(NSFloatingWindowLevel)
+                    print(f"DEBUG: Set NSWindow floating level for ImageWindow at ({tk_x}, {tk_y})")
+                    return
+            # Fallback: set level on all borderless windows
+            print("DEBUG: Could not match NSWindow, trying all windows")
+        except ImportError:
+            print("DEBUG: AppKit not available, topmost may not persist")
+        except Exception as e:
+            print(f"DEBUG: Error setting floating level: {e}")
+
     def setup_hotkey_listener(self):
         def on_activate_paint():
             self.app.exit_all_modes()
@@ -187,8 +230,22 @@ class ImageWindow:
             if self.img_window.winfo_exists():
                 self.text_tool.enable_text_mode()
 
+        def safe_canonical(key):
+            from pynput.keyboard import Key, KeyCode, _NORMAL_MODIFIERS
+            if isinstance(key, KeyCode):
+                if key.char is not None and key.char.isprintable():
+                    return KeyCode.from_char(key.char.lower())
+                elif key.vk is not None:
+                    return KeyCode.from_vk(key.vk)
+                return key
+            elif isinstance(key, Key) and key.value in _NORMAL_MODIFIERS:
+                return _NORMAL_MODIFIERS[key.value]
+            elif isinstance(key, Key) and hasattr(key.value, 'vk') and key.value.vk is not None:
+                return KeyCode.from_vk(key.value.vk)
+            return key
+
         def for_canonical(f):
-            return lambda k: f(self.listener.canonical(k))
+            return lambda k: f(safe_canonical(k))
 
         # 从配置文件获取快捷键
         hotkey_paint_str = self.config['Shortcuts'].get('hotkey_paint', '<ctrl>+p')
@@ -302,6 +359,11 @@ class ImageWindow:
         self.context_menu.add_separator()
         self.context_menu.add_command(label="⚙️ LLM Settings", command=self.show_llm_settings)
 
+        # Version & platform info
+        _platform = "macOS" if sys.platform == "darwin" else "Windows"
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label=f"Fastshot v{_APP_VERSION} ({_platform})", state="disabled")
+
     def close(self):
         # Stop persistent keyboard listener
         self.stop_persistent_key_listener()
@@ -365,30 +427,31 @@ class ImageWindow:
     #     self.img_window.bind('<MouseWheel>', self.zoom)
 
     def copy(self):
-        output = io.BytesIO()
-        self.img_label.zoomed_image.save(output, format='BMP')
-        data = output.getvalue()[14:]
-        output.close()
-
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-        win32clipboard.CloseClipboard()
+        """Copy image to clipboard — cross-platform."""
+        try:
+            _clipboard().copy_image(self.img_label.zoomed_image)
+            print("Image copied to clipboard")
+        except Exception as e:
+            print(f"Error copying image to clipboard: {e}")
 
     def text(self):
         self.text_tool.enable_text_mode()
 
     def ocr(self):
-        plugin = self.app.plugins.get('fastshot.plugin_ocr')
-        if plugin:
+        ocr_engine = getattr(self.app, 'ocr_engine', None)
+        if ocr_engine:
             img_path = 'temp.png'
             self.img_label.zoomed_image.save(img_path)
-            result = plugin.ocr(img_path)
-            plugin.show_message("OCR result updated in clipboard", self.img_window)
+            result = ocr_engine.ocr(img_path)
+            ocr_engine.show_message("OCR result updated in clipboard", self.img_window)
 
     def zoom(self, event):
         if not self.is_dialog_open:
-            scale_factor = 1.1 if event.delta > 0 else 0.9
+            # macOS returns delta in different scale than Windows
+            if sys.platform == 'darwin':
+                scale_factor = 1.1 if event.delta > 0 else 0.9
+            else:
+                scale_factor = 1.1 if event.delta > 0 else 0.9
 
             last_scale = self.img_label.scale
             new_scale = last_scale * scale_factor
@@ -453,7 +516,14 @@ class ImageWindow:
                     draw.line((scaled_x1, scaled_y1, scaled_x2, scaled_y2), fill="red", width=3)
             elif isinstance(item, tuple) and item[0] == 'text':  # 文字的历史记录
                 _, scaled_x, scaled_y, text = item
-                font = ImageFont.truetype("arial", size=int(28 * self.img_label.scale))
+                # Use platform-appropriate font
+                try:
+                    if sys.platform == 'darwin':
+                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=int(28 * self.img_label.scale))
+                    else:
+                        font = ImageFont.truetype("arial", size=int(28 * self.img_label.scale))
+                except (IOError, OSError):
+                    font = ImageFont.load_default()
                 draw.text((int(scaled_x * self.img_label.scale), int(scaled_y * self.img_label.scale)),
                           text, fill="red", font=font)
         self.img_label.image = ImageTk.PhotoImage(self.img_label.zoomed_image)

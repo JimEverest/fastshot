@@ -601,9 +601,10 @@ class NotesManager:
         """Load notes from local files (fallback when cache is not available)."""
         notes = []
         try:
-            # Get all note files
-            note_files = list(self.notes_dir.glob("*.json"))
-            
+            # Get all note files (exclude non-note files like cache_info.json, search_history.json)
+            excluded_files = {"cache_info.json", "search_history.json", "cache_lock", "overall_notes_index.json"}
+            note_files = [f for f in self.notes_dir.glob("*.json") if f.name not in excluded_files]
+
             # Load and validate notes
             for note_file in note_files:
                 try:

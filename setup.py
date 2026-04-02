@@ -16,28 +16,35 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        "pyautogui",
+        # Cross-platform
         "pynput",
         "pillow",
-        "screeninfo",
         "mss",
-        "Pillow",
         "pyperclip",
-        "pywin32",
         "rapidocr>=3.0.0",
         "onnxruntime",
         "customtkinter",
-        "flask",
         "configparser",
         "openai",
-        "httpx>=0.24.0"
+        "httpx>=0.24.0",
+        "requests",
+        "numpy",
+        "boto3>=1.26.0",
+        # Windows only
+        "pywin32; sys_platform == 'win32'",
+        "pyautogui; sys_platform == 'win32'",
+        "screeninfo; sys_platform == 'win32'",
+        # macOS only
+        "pyobjc>=10.0; sys_platform == 'darwin'",
     ],
     package_data={
         'fastshot': [
             'config.ini',
             '_config_reset.ini',
             'plugins/*',
+            'plugins/utils/*',
             'resources/*.onnx',
+            'app_platform/*',
             'web/templates/*.html',
             'web/static/css/*.css',
             'web/static/js/*.js',
@@ -52,13 +59,14 @@ setup(
     author='Jim T',
     author_email='tianwai263@gmail.com',
     description='A versatile screen capturing tool with annotation and OCR features',
-    long_description=open('README.md', encoding='utf-8').read(),  # 使用 UTF-8 编码
+    long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
     url='https://github.com/jimeverest/fastshot',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
-        'Operating System :: OS Independent',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: MacOS :: MacOS X',
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.9',
 )

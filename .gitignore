@@ -62,3 +62,4 @@ GITHUB_ACTIONS_BUILD_FIX.md
 .claude/settings.local.json
 simple_treeview_test.py
 fastshot/config.ini
+.venv/*

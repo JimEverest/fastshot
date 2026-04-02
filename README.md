@@ -1,8 +1,8 @@
 # Fastshot
 
-Fastshot is a GenAI powered screenshot and annotation tool designed to optimize your workflow. Ideal for students, developers, researchers, and operations professionals, Fastshot enhances multitasking by providing seamless, efficient tools to capture, pin, annotate, and analyze screen content.
+Fastshot is a cross-platform, GenAI-powered screenshot and annotation tool designed to optimize your workflow. It runs on **Windows** and **macOS**, and is ideal for students, developers, researchers, and operations professionals.
 
-With its "pin on top" feature, Fastshot allows users to keep screenshots easily accessible while enabling smooth zooming, moving, annotation, and copying for multi-system comparisons. The built-in OCR tool enables quick extraction of text from any part of the screen, further streamlining your workflow.
+With its "pin on top" feature, Fastshot allows users to keep screenshots easily accessible while enabling smooth zooming, moving, annotation, and copying for multi-system comparisons. The built-in OCR tool (RapidOCR with PP-OCRv5, running locally) enables quick extraction of text from any part of the screen, further streamlining your workflow.
 
 Additionally, Fastshot's GenAI-powered assistant offers advanced analysis and summarization of screen content, allowing users to extract information and ask questions with ease, significantly boosting productivity.
 
@@ -10,6 +10,7 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 
 ## Table of Contents
 - [Features](#features)
+- [Platform Support](#platform-support)
 - [Configuration](#configuration)
 - [Cloud Sync Performance Optimization](#cloud-sync-performance-optimization)
 - [Installation](#installation)
@@ -33,7 +34,7 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 - **Smooth Zoom and Drag**: Effortlessly zoom and drag screenshots to focus on details.
 - **Annotation Tools**: Hand-drawing and text mode for quick annotations.
 - **Clipboard Export**: Easily export screenshots to the clipboard for sharing.
-- **OCR Integration**: Extract text from images using the built-in OCR plugin powered by PaddleOCR running locally.
+- **OCR Integration**: Extract text from images using the built-in OCR plugin powered by RapidOCR (PP-OCRv5) running locally.
 - **AI Assistant**: Ask questions about the screenshot using the integrated GenAI assistant.
 
 ### Context Menu Options
@@ -47,11 +48,16 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 - 🔍 **OCR**: Perform OCR on the current screenshot and copy the result to the clipboard.
 
 ### System Window Control
-- 📌 **Always on Top**: Toggle the window's always-on-top state.
-- 🔍 **Window Transparency Adjustment**: Adjust transparency of any system window via hotkeys for better multitasking.
+- **Always on Top**: Toggle the window's always-on-top state.
+- **Window Transparency Adjustment**: Adjust transparency of any system window via hotkeys for better multitasking.
+
+> **macOS Note**: On macOS, always-on-top and opacity hotkeys work on Fastshot's own Image Windows only. macOS Sequoia blocks cross-process window control via private APIs. See `docs/macos_window_control_investigation.md` for details.
 
 ### Screen Annotation
-- 🖊️ **Screen Pen**: Activate the screen pen to annotate anywhere on your screen.
+- **Screen Pen**: Activate the screen pen to annotate anywhere on your screen.
+  - Pen and highlighter tools with configurable colors and opacity
+  - Undo/Redo support (Ctrl+Z / Cmd+Z)
+  - macOS: Uses screenshot-based overlay (Tk 9.x Metal renderer requires this approach)
 
 ### GenAI Assistant
 - **Multimodal AI Assistant**: Seamlessly integrated AI assistant that can read any content on your screen and answer your questions.
@@ -88,6 +94,27 @@ The tool also includes a Screen Pen feature, window pinning capabilities, and cu
 - **Advanced File Manager**: Comprehensive session manager with filtering, sorting, and pagination
 - **Cross-Platform Sync**: Seamlessly synchronize sessions between different devices
 - **Cache Management**: Smart synchronization with integrity validation and automatic recovery
+
+## Platform Support
+
+| Feature | Windows | macOS |
+|---------|---------|-------|
+| Screenshot & Annotation | Win32 API | mss + PIL |
+| Screen Pen | Transparent overlay | Screenshot-based overlay (Tk 9.x Metal) |
+| Highlighter transparency | Stipple pattern | PIL RGBA images |
+| Always-on-top (own windows) | Win32 `SetWindowPos` | tkinter `attributes('-topmost')` |
+| Always-on-top (any window) | Win32 `SetWindowPos` | Not possible (macOS Sequoia blocks) |
+| Opacity control (own windows) | Win32 `SetLayeredWindowAttributes` | tkinter `attributes('-alpha')` |
+| Opacity control (any window) | Win32 `SetLayeredWindowAttributes` | Not possible (macOS Sequoia blocks) |
+| OCR | RapidOCR (PP-OCRv5) | RapidOCR (PP-OCRv5) |
+| Cloud Sync | AWS S3 + AES-256 | AWS S3 + AES-256 |
+| Undo/Redo in Screen Pen | tkinter key bindings | pynput global HotKeys |
+
+### macOS Requirements
+- Python 3.9+
+- macOS 12+ (tested on macOS Sequoia 15.x)
+- Accessibility permissions (System Settings > Privacy & Security > Accessibility)
+- `pyobjc >= 10.0` (installed automatically)
 
 ## Configuration
 ### LLM Settings
@@ -176,6 +203,14 @@ You can install Fastshot from PyPI:
 pip install fastshot
 ```
 
+### macOS
+On macOS, `pyobjc` is installed automatically. If you encounter issues, install from the macOS-specific requirements:
+```bash
+pip install -r requirements_macos.txt
+```
+
+After installation, grant Accessibility permissions to your terminal app (System Settings > Privacy & Security > Accessibility).
+
 
 ## Usage
 Once installed, you can start Fastshot from the command line:
@@ -224,25 +259,28 @@ hotkey_screenpen_exit = <esc>
 hotkey_screenpen_clear_hide = <ctrl>+<esc>
 
 hotkey_topmost_on = <esc>+`
-hotkey_topmost_off = <cmd>+<shift>+\
+hotkey_topmost_off = <esc>+`
 
-hotkey_opacity_down = <left>+<right>+<down>
-hotkey_opacity_up = <left>+<right>+<up>
+hotkey_opacity_down = <left>+<down>+<right>
+hotkey_opacity_up = <left>+<up>+<right>
 
 hotkey_ask_dialog_key = <ctrl>
 hotkey_ask_dialog_count = 4
 hotkey_ask_dialog_time_window = 1.0
 
-hotkey_toggle_visibility = <shift>+<f1>     # Toggle visibility of all image windows
-hotkey_load_image = <shift>+<f2>            # Load image from file
-hotkey_reposition_windows = <shift>+<f3>    # Reposition all image windows to origin
-hotkey_save_session = <shift>+<f4>          # Save current session to file
-hotkey_load_session = <shift>+<f5>          # Load session from file
-hotkey_session_manager = <shift>+<f6>       # Open session manager UI
+hotkey_toggle_visibility = <ctrl>+<shift>+1     # Toggle visibility of all image windows
+hotkey_load_image = <ctrl>+<shift>+2             # Load image from file
+hotkey_reposition_windows = <ctrl>+<shift>+3     # Reposition all image windows to origin
+hotkey_save_session = <ctrl>+<shift>+4           # Save current session to file
+hotkey_load_session = <ctrl>+<shift>+5           # Load session from file
+hotkey_session_manager = <ctrl>+<shift>+6        # Open session manager UI
+hotkey_quick_notes = <ctrl>+<shift>+7            # Quick Notes
+hotkey_image_gallery = <ctrl>+<shift>+8          # Image Gallery
+hotkey_recover_cache = <ctrl>+<shift>+0          # Recover from temp cache
 
 # Quick Cloud Hyder - Advanced file sync
-# Quick Cloud Hyder: Press Ctrl+Alt alternately 8 times (Ctrl→Alt→Ctrl→Alt→Ctrl→Alt→Ctrl→Alt)
-# Quick Cloud Retriver: Press Ctrl+Win alternately 8 times (Ctrl→Win→Ctrl→Win→Ctrl→Win→Ctrl→Win)
+# Quick Cloud Hyder: Press Ctrl+Alt alternately 8 times
+# Quick Cloud Retriver: Press Ctrl+Win alternately 8 times
 ```
 
 
@@ -480,6 +518,5 @@ Collaboration: Engage with the community to improve and expand plugin functional
 21. ~~tk window force bring to front again~~
 22. ~~tk window trigger clean previous window.~~
 23. ~~Cloud Sync Performance Optimization (99%+ faster UI loading, smart caching, async operations)~~
-
-
+24. ~~macOS port — Screen Pen, Window Control, Highlighter, Hotkeys~~
 

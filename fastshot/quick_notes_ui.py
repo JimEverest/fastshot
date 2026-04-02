@@ -48,43 +48,52 @@ class QuickNotesUI:
         """Show the Quick Notes window."""
         try:
             print("DEBUG: show_window() called")
-            
+
             # Check if window exists and is valid
             window_exists = False
             if self.window:
                 try:
-                    # Try to access window properties to verify it's still valid
                     self.window.winfo_exists()
                     self.window.winfo_viewable()
                     window_exists = True
                     print("DEBUG: Window exists and is valid")
                 except:
-                    # Window object exists but is destroyed, clean it up
                     print("DEBUG: Window object exists but is destroyed, cleaning up")
                     self.window = None
                     self.is_visible = False
-            
+
+            # If window exists but UI components are missing, destroy and recreate
+            if window_exists and not self.notes_tree:
+                print("DEBUG: Window exists but UI components missing, recreating")
+                try:
+                    self.window.destroy()
+                except:
+                    pass
+                self.window = None
+                self.is_visible = False
+                window_exists = False
+
             if window_exists:
-                # Window exists, just bring to front
+                # Window exists with valid UI, just bring to front
                 print("DEBUG: Bringing existing window to front")
                 self.window.lift()
                 self.window.focus_force()
-                self.window.deiconify()  # Make sure it's not minimized
-                
+                self.window.deiconify()
+
                 # Trigger sync status check when bringing window to front
                 self._check_sync_status_on_show()
                 return
-            
+
             # Create new window
             print("DEBUG: Creating new window")
             self._create_window()
             print("DEBUG: Window created, loading notes list")
             self._load_notes_list()
             print("DEBUG: Notes list loaded, checking sync status")
-            
+
             # Check sync status when opening window for the first time
             self._check_sync_status_on_show()
-            
+
             print("DEBUG: Notes list loaded, setting visible flag")
             self.is_visible = True
             print("DEBUG: show_window() completed successfully")
@@ -266,48 +275,63 @@ class QuickNotesUI:
     
     def _create_window(self):
         """Create the main Quick Notes window."""
-        self.window = ctk.CTkToplevel()
+        # Pass app root as parent — required on macOS for CTkToplevel to render properly
+        parent = getattr(self.app, 'root', None)
+        self.window = ctk.CTkToplevel(parent) if parent else ctk.CTkToplevel()
         self.window.title("Quick Notes")
         self.window.geometry("1300x700")
         self.window.minsize(1100, 500)
-        
+
         # Configure window properties
         self.window.attributes('-topmost', True)
         self.window.protocol("WM_DELETE_WINDOW", self._on_window_close)
-        
+
+        # On macOS, CTkToplevel needs a brief delay before adding widgets
+        # to ensure the window is fully initialized
+        self.window.update_idletasks()
+
         # Create main UI
         self._create_ui()
     
     def _create_ui(self):
         """Create the main UI layout."""
-        # Main container with padding
-        main_frame = ctk.CTkFrame(self.window)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Create split pane layout
-        paned_window = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=5)
-        paned_window.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # Left pane - Notes list
-        self._create_notes_list_pane(paned_window)
-        
-        # Right pane - Editor
-        self._create_editor_pane(paned_window)
-        
-        # Add panes to PanedWindow with specific widths
-        paned_window.add(self.notes_list_frame, minsize=500, width=750)
-        paned_window.add(self.editor_frame, minsize=400, width=500)
-        
-        # Store paned_window reference for later use
-        self.paned_window = paned_window
-        
-        # Set initial pane sizes (750px left, 500px right) with multiple attempts
-        self.window.after(50, lambda: self._set_pane_sizes())
-        self.window.after(200, lambda: self._set_pane_sizes())
-        self.window.after(500, lambda: self._set_pane_sizes())
-        self.window.after(1000, lambda: self._set_pane_sizes())  # Additional attempt
-        self.window.after(2000, lambda: self._set_pane_sizes())  # Even more attempts
-        self.window.after(3000, lambda: self._set_pane_sizes())  # Final attempt
+        try:
+            # Main container with padding
+            main_frame = ctk.CTkFrame(self.window)
+            main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+            # Create split pane layout
+            paned_window = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=5)
+            paned_window.pack(fill="both", expand=True, padx=5, pady=5)
+
+            # Left pane - Notes list
+            self._create_notes_list_pane(paned_window)
+            print(f"DEBUG: notes_tree created: {self.notes_tree is not None}")
+
+            # Right pane - Editor
+            self._create_editor_pane(paned_window)
+            print(f"DEBUG: editor_text created: {self.editor_text is not None}")
+
+            # Add panes to PanedWindow with specific widths
+            paned_window.add(self.notes_list_frame, minsize=500, width=750)
+            paned_window.add(self.editor_frame, minsize=400, width=500)
+
+            # Store paned_window reference for later use
+            self.paned_window = paned_window
+
+            # Set initial pane sizes (750px left, 500px right) with multiple attempts
+            self.window.after(50, lambda: self._set_pane_sizes())
+            self.window.after(200, lambda: self._set_pane_sizes())
+            self.window.after(500, lambda: self._set_pane_sizes())
+            self.window.after(1000, lambda: self._set_pane_sizes())
+            self.window.after(2000, lambda: self._set_pane_sizes())
+            self.window.after(3000, lambda: self._set_pane_sizes())
+
+            print("DEBUG: _create_ui completed successfully")
+        except Exception as e:
+            print(f"ERROR in _create_ui: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _set_pane_sizes(self):
         """Set the pane sizes to ensure left panel is 750px and right panel is 500px."""
@@ -349,7 +373,7 @@ class QuickNotesUI:
         ctk.CTkLabel(search_frame, text="Search:").pack(side="left", padx=(5, 5))
         
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", self._on_search_changed)
+        self.search_var.trace_add("write", self._on_search_changed)
         self.search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var, placeholder_text="Search by name or short code...")
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
@@ -524,13 +548,19 @@ class QuickNotesUI:
     
     def _update_notes_tree(self):
         """Update the notes tree view with current data."""
+        # Guard: notes_tree may not be created yet
+        if not self.notes_tree:
+            print("Warning: notes_tree not initialized, skipping update")
+            return
+
         # Clear existing items
         for item in self.notes_tree.get_children():
             self.notes_tree.delete(item)
-        
+
         # Clear existing action buttons
-        for widget in self.actions_frame.winfo_children():
-            widget.destroy()
+        if self.actions_frame:
+            for widget in self.actions_frame.winfo_children():
+                widget.destroy()
         
         # Clear the note ID mapping
         if not hasattr(self, '_note_id_map'):
@@ -953,9 +983,6 @@ class QuickNotesUI:
             self.title_entry.delete(0, tk.END)
         if self.editor_text:
             self.editor_text.delete("1.0", tk.END)
-        if self.info_label:
-            self.info_label.configure(text="")
-        self.current_note_id = Nonelf.editor_text.delete("1.0", tk.END)
         if self.info_label:
             self.info_label.configure(text="")
         self.current_note_id = None

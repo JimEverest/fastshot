@@ -5,11 +5,13 @@ from PIL import ImageTk, Image
 import threading
 import time
 import os
+import sys
 import base64
 import json
 import io
 import customtkinter as ctk
 from fastshot.gpt4o import ask
+from fastshot.__version__ import __version__ as _APP_VERSION
 
 class AskDialog:
     def __init__(self, image_window=None):
@@ -25,7 +27,8 @@ class AskDialog:
 
         # Create the main dialog window
         self.dialog_window = ctk.CTkToplevel()
-        self.dialog_window.title("Fastshot")
+        _platform = "macOS" if sys.platform == "darwin" else "Windows"
+        self.dialog_window.title(f"Fastshot v{_APP_VERSION} ({_platform})")
         self.dialog_window.geometry("600x800")
         self.dialog_window.minsize(400, 600)
         self.dialog_window.attributes('-topmost', True)
@@ -381,8 +384,11 @@ class AskDialog:
     #         print(f"Exception during resize: {e}")
 
     def ask_dummy(self):
-        # Simulate sending messages to OpenAI GPT-4V model
-        answer_content = ask(self.messages)  # Replace with actual call to GPT-4V
+        try:
+            answer_content = ask(self.messages)
+        except Exception as e:
+            print(f"Error calling AI: {e}")
+            answer_content = f"[Error] AI request failed: {e}"
 
         # Add AI's response to messages list
         self.messages.append({

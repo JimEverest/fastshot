@@ -1,12 +1,35 @@
 import tkinter as tk
 from PIL import Image
+import sys
+import time
 import mss
 import mss.tools
 import io
-import win32gui
-import pyautogui
-import win32con
-from screeninfo import get_monitors
+import os
+# Use platform-specific monitor detection for better macOS support
+from fastshot.app_platform import get_monitors
+
+# Conditionally import win32 modules (Windows only)
+_IS_WINDOWS = os.name == 'nt'
+_IS_MAC = sys.platform == 'darwin'
+if _IS_WINDOWS:
+    try:
+        import win32gui
+        import win32con
+        import pyautogui
+    except ImportError:
+        _IS_WINDOWS = False
+
+
+def _get_retina_scale():
+    """Get the Retina backing scale factor on macOS."""
+    if not _IS_MAC:
+        return 1.0
+    try:
+        from AppKit import NSScreen
+        return NSScreen.mainScreen().backingScaleFactor() or 1.0
+    except Exception:
+        return 1.0
 
 
 class SnippingTool:
@@ -35,6 +58,7 @@ class SnippingTool:
 
         for monitor in self.monitors:
             overlay = tk.Toplevel(self.root)
+            overlay.overrideredirect(True)  # No window decorations for full-screen overlay
             overlay.title("overlay_snipping")
             overlay.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
             overlay.configure(bg='blue')
@@ -61,16 +85,31 @@ class SnippingTool:
         self.start_x = self.start_y = self.end_x = self.end_y = 0
 
     def bring_window_to_front(self, window):
-        # Get the window handle (HWND)
-        hwnd = int(window.frame(), 16)  # Convert hex string to integer
-        # Use win32gui to bring the window to front
-        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                              win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
-        pyautogui.press("alt")
-        win32gui.SetForegroundWindow(hwnd)
-        win32gui.BringWindowToTop(hwnd)
-        # Force the window to be the active window
-        win32gui.SetActiveWindow(hwnd)
+        """Bring overlay window to front — platform-aware."""
+        if _IS_WINDOWS:
+            # Windows: use win32gui for reliable foreground activation
+            try:
+                hwnd = int(window.frame(), 16)
+                win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+                pyautogui.press("alt")
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
+                win32gui.SetActiveWindow(hwnd)
+            except Exception as e:
+                print(f"Win32 bring_to_front failed, using tkinter fallback: {e}")
+                self._bring_to_front_tkinter(window)
+        else:
+            # macOS / Linux: use pure tkinter methods
+            self._bring_to_front_tkinter(window)
+
+    def _bring_to_front_tkinter(self, window):
+        """Cross-platform bring-to-front using tkinter."""
+        window.lift()
+        window.focus_force()
+        # On macOS, we may need to briefly set topmost to grab focus
+        window.attributes('-topmost', True)
+        window.after(100, lambda: window.attributes('-topmost', True))  # Keep topmost for overlay
 
     def exit_snipping(self, event=None):
         self.snipping = False
@@ -113,21 +152,27 @@ class SnippingTool:
         x2 = max(self.start_x, self.end_x)
         y2 = max(self.start_y, self.end_y)
 
+        # Hide overlays and ensure they are fully hidden before capture
         for overlay in self.overlays:
             overlay.withdraw()
+        self.root.update_idletasks()
+        self.root.update()
+        if _IS_MAC:
+            # macOS needs a brief delay for window server to fully hide overlays
+            time.sleep(0.15)
+
+        # On Retina Mac, tkinter uses logical "points" but mss uses physical pixels
+        scale = _get_retina_scale() if _IS_MAC else 1.0
 
         with mss.mss() as sct:
             monitor = {
-                "top": int(y1),
-                "left": int(x1),
-                "width": int(x2 - x1),
-                "height": int(y2 - y1)
+                "top": int(y1 * scale),
+                "left": int(x1 * scale),
+                "width": int((x2 - x1) * scale),
+                "height": int((y2 - y1) * scale)
             }
             screenshot = sct.grab(monitor)
             img = mss.tools.to_png(screenshot.rgb, screenshot.size)
-
-        for overlay in self.overlays:
-            overlay.deiconify()
 
         img = Image.open(io.BytesIO(img))
         img = img.convert('RGB')

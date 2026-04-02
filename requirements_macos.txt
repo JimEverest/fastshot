@@ -1,0 +1,20 @@
+# macOS dependencies for Fastshot
+# Cross-platform dependencies
+pynput
+screeninfo
+mss
+Pillow
+pyperclip
+rapidocr>=3.0.0
+onnxruntime
+customtkinter
+configparser
+openai>=1.0.0
+httpx>=0.24.0
+boto3>=1.26.0
+botocore>=1.29.0
+requests
+numpy
+
+# macOS-specific dependencies
+pyobjc>=10.0

@@ -41,6 +41,43 @@ class ScreenPenFrame(ttk.Frame):
         self.color_preview = tk.Canvas(color_frame, width=20, height=20)
         self.color_preview.pack(side='left')
         self.update_color_preview()
+
+        # Highlighter颜色
+        hl_color_frame = ttk.Frame(self)
+        hl_color_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(hl_color_frame, text="Highlighter Color:").pack(side='left')
+        self.hl_color_btn = ttk.Button(
+            hl_color_frame,
+            text="Choose Color",
+            command=self.choose_hl_color
+        )
+        self.hl_color_btn.pack(side='left', padx=5)
+
+        self.hl_color_var = tk.StringVar(value=settings.get('highlighter_color', '#FFFF00'))
+        self.hl_color_preview = tk.Canvas(hl_color_frame, width=20, height=20)
+        self.hl_color_preview.pack(side='left')
+        self.update_hl_color_preview()
+
+        # Highlighter透明度
+        hl_opacity_frame = ttk.Frame(self)
+        hl_opacity_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(hl_opacity_frame, text="Highlighter Opacity:").pack(side='left')
+        self.hl_opacity_var = tk.DoubleVar(value=float(settings.get('highlighter_opacity', '0.25')))
+        hl_opacity_scale = ttk.Scale(
+            hl_opacity_frame,
+            from_=0.12,
+            to=0.75,
+            variable=self.hl_opacity_var,
+            orient='horizontal',
+            length=200
+        )
+        hl_opacity_scale.pack(side='left', padx=5)
+
+        self.hl_opacity_label = ttk.Label(hl_opacity_frame, text=f"{int(self.hl_opacity_var.get() * 100)}%")
+        self.hl_opacity_label.pack(side='left', padx=5)
+        hl_opacity_scale.configure(command=self.update_hl_opacity_label)
         
         # 画笔宽度
         width_frame = ttk.Frame(self)
@@ -85,7 +122,13 @@ class ScreenPenFrame(ttk.Frame):
         if color:
             self.color_var.set(color)
             self.update_color_preview()
-    
+
+    def choose_hl_color(self):
+        color = colorchooser.askcolor(color=self.hl_color_var.get())[1]
+        if color:
+            self.hl_color_var.set(color)
+            self.update_hl_color_preview()
+
     def update_color_preview(self):
         self.color_preview.delete('all')
         self.color_preview.create_rectangle(
@@ -93,17 +136,31 @@ class ScreenPenFrame(ttk.Frame):
             fill=self.color_var.get(),
             outline=''
         )
+
+    def update_hl_color_preview(self):
+        self.hl_color_preview.delete('all')
+        self.hl_color_preview.create_rectangle(
+            0, 0, 20, 20,
+            fill=self.hl_color_var.get(),
+            outline=''
+        )
     
     def update_opacity_label(self, value):
         """更新透明度标签显示"""
         opacity_percent = int(float(value) * 100)
         self.opacity_label.config(text=f"{opacity_percent}%")
+
+    def update_hl_opacity_label(self, value):
+        opacity_percent = int(float(value) * 100)
+        self.hl_opacity_label.config(text=f"{opacity_percent}%")
     
     def get_settings(self):
         """获取当前设置"""
         return {
             'enable_screenpen': str(self.enable_var.get()),
             'pen_color': self.color_var.get(),
+            'highlighter_color': self.hl_color_var.get(),
+            'highlighter_opacity': str(self.hl_opacity_var.get()),
             'pen_width': self.width_var.get(),
             'overlay_opacity': str(self.opacity_var.get())
         } 

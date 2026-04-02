@@ -1,18 +1,31 @@
 # window_control.py
 
-import ctypes
-from ctypes import wintypes
-from pynput import keyboard, mouse
-import win32gui
-import win32con
-import win32process
+import os
+import sys
 import time
 import math
+from pynput import keyboard, mouse
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# Platform-aware imports
+_IS_WINDOWS = os.name == 'nt'
 
-# Constants
+if _IS_WINDOWS:
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import win32gui
+        import win32con
+        import win32process
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+    except ImportError:
+        _IS_WINDOWS = False
+        print("WARNING: win32 modules not available on this system")
+
+# Import platform abstraction
+from fastshot.app_platform import window_control as _platform_wc
+
+# Constants (Windows-specific, but kept for backward compat)
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x80000
 LWA_ALPHA = 0x2
@@ -24,140 +37,153 @@ SWP_SHOWWINDOW = 0x0040
 # Global variable for window opacity
 current_window_opacity = 1.0  # Default opacity
 
+
 def get_foreground_window():
-    hwnd = user32.GetForegroundWindow()
-    if hwnd and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        process_handle = open_process(pid)
-        if process_handle:
-            executable = win32process.GetModuleFileNameEx(process_handle, None)
-            window_title = win32gui.GetWindowText(hwnd)
-            window_class = win32gui.GetClassName(hwnd)
-            print(f"Current active window handle: {hwnd}, Title: {window_title}, Executable: {executable}, Class: {window_class}")
-            return hwnd
+    """Get the foreground window handle — cross-platform."""
+    if _IS_WINDOWS:
+        hwnd = user32.GetForegroundWindow()
+        if hwnd and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
+            try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                process_handle = open_process(pid)
+                if process_handle:
+                    executable = win32process.GetModuleFileNameEx(process_handle, None)
+                    window_title = win32gui.GetWindowText(hwnd)
+                    window_class = win32gui.GetClassName(hwnd)
+                    print(f"Current active window handle: {hwnd}, Title: {window_title}, Executable: {executable}, Class: {window_class}")
+                    return hwnd
+                else:
+                    print(f"Cannot open process, PID: {pid}")
+                    return hwnd  # Return hwnd even if we can't get process details
+            except Exception as e:
+                print(f"Error getting foreground window info: {e}")
+                return hwnd
         else:
-            print(f"Cannot open process, PID: {pid}")
+            print("Cannot get valid foreground window handle or window is not visible")
             return None
     else:
-        print("Cannot get valid foreground window handle or window is not visible")
-        return None
+        # macOS/Linux: return platform info dict
+        return _platform_wc().get_foreground_window()
+
 
 def open_process(pid):
+    """Windows-only: open a process handle."""
+    if not _IS_WINDOWS:
+        return None
     PROCESS_ALL_ACCESS = (0x000F0000 | 0x00100000 | 0xFFF)
     return kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
 
+
 def set_window_opacity(hwnd, opacity):
+    """Set window opacity — cross-platform."""
     global current_window_opacity
-    if hwnd:
+    opacity = max(0.1, min(opacity, 1.0))
+    current_window_opacity = opacity
+    print(f"Setting opacity: {opacity * 100}%")
+
+    if _IS_WINDOWS and isinstance(hwnd, int):
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
-        # Ensure opacity is between 10% and 100%
-        opacity = max(0.1, min(opacity, 1.0))
-        current_window_opacity = opacity
-        print(f"Setting opacity: {opacity * 100}%")
         user32.SetLayeredWindowAttributes(hwnd, 0, int(255 * opacity), LWA_ALPHA)
+    else:
+        # For macOS, hwnd would be a tkinter window or platform handle
+        _platform_wc().set_window_opacity(hwnd, opacity)
+
 
 def get_window_opacity(hwnd):
     global current_window_opacity
     return current_window_opacity
 
+
 def toggle_always_on_top():
-    hwnd = get_foreground_window()
-    if hwnd == 0:
-        return
-    window_title = win32gui.GetWindowText(hwnd)
+    """Toggle always-on-top for the foreground window."""
+    if _IS_WINDOWS:
+        hwnd = get_foreground_window()
+        if hwnd == 0 or hwnd is None:
+            return
+        window_title = win32gui.GetWindowText(hwnd)
+        try:
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            is_topmost = bool(ex_style & win32con.WS_EX_TOPMOST)
+            if is_topmost:
+                win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+                print(f"Window '{window_title}' is no longer always on top.")
+            else:
+                win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+                print(f"Window '{window_title}' is now always on top.")
+        except Exception as e:
+            print(f"Exception while toggling always-on-top: {e}")
+    else:
+        # macOS: toggling topmost on external windows is limited
+        print("Toggle always-on-top: limited to Fastshot windows on macOS")
 
-    try:
-        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-        is_topmost = bool(ex_style & win32con.WS_EX_TOPMOST)
-
-        if is_topmost:
-            # Remove always-on-top
-            win32gui.SetWindowPos(
-                hwnd,
-                win32con.HWND_NOTOPMOST,
-                0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
-            )
-            print(f"Window '{window_title}' is no longer always on top.")
-        else:
-            # Set always-on-top
-            win32gui.SetWindowPos(
-                hwnd,
-                win32con.HWND_TOPMOST,
-                0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
-            )
-            print(f"Window '{window_title}' is now always on top.")
-    except Exception as e:
-        print(f"Exception while toggling always-on-top: {e}")
 
 def resize_foreground_window(zoom_in):
     """Resizes the foreground window, keeping it centered."""
-    hwnd = get_foreground_window()
-    if not hwnd:
-        print("Resize: No valid foreground window found.")
-        return
-
-    try:
-        # Get current window position and size
-        rect = wintypes.RECT()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            print(f"Resize: Failed to get window rect for HWND {hwnd}")
+    if _IS_WINDOWS:
+        hwnd = get_foreground_window()
+        if not hwnd:
             return
+        try:
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            current_x = rect.left
+            current_y = rect.top
+            current_width = rect.right - rect.left
+            current_height = rect.bottom - rect.top
+            if current_width <= 0 or current_height <= 0:
+                return
+            zoom_factor = 1.1 if zoom_in else 1 / 1.1
+            new_width = int(math.ceil(current_width * zoom_factor))
+            new_height = int(math.ceil(current_height * zoom_factor))
+            min_size = 50
+            if new_width < min_size or new_height < min_size:
+                return
+            delta_width = new_width - current_width
+            delta_height = new_height - current_height
+            new_x = current_x - delta_width // 2
+            new_y = current_y - delta_height // 2
+            if user32.MoveWindow(hwnd, new_x, new_y, new_width, new_height, True):
+                pass
+            else:
+                print(f"Resize: MoveWindow failed for HWND {hwnd}.")
+        except Exception as e:
+            print(f"Exception during window resize: {e}")
+    else:
+        print("Resize foreground window: not supported on macOS for external windows")
 
-        current_x = rect.left
-        current_y = rect.top
-        current_width = rect.right - rect.left
-        current_height = rect.bottom - rect.top
-
-        if current_width <= 0 or current_height <= 0:
-             print(f"Resize: Invalid window dimensions ({current_width}x{current_height}).")
-             return
-
-        # Define zoom factor
-        zoom_factor = 1.1 if zoom_in else 1 / 1.1
-
-        # Calculate new dimensions
-        new_width = int(math.ceil(current_width * zoom_factor))
-        new_height = int(math.ceil(current_height * zoom_factor))
-
-        # Prevent window from becoming too small
-        min_size = 50 # Minimum width/height in pixels
-        if new_width < min_size or new_height < min_size:
-            print(f"Resize: Minimum size ({min_size}px) reached.")
-            return
-
-        # Calculate position adjustment to keep window centered
-        delta_width = new_width - current_width
-        delta_height = new_height - current_height
-        new_x = current_x - delta_width // 2
-        new_y = current_y - delta_height // 2
-
-        # Use MoveWindow to resize and reposition
-        # BOOL MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint);
-        if user32.MoveWindow(hwnd, new_x, new_y, new_width, new_height, True):
-             # print(f"Resized window {hwnd} to {new_width}x{new_height} at ({new_x},{new_y})")
-             pass
-        else:
-             print(f"Resize: MoveWindow failed for HWND {hwnd}. Error: {kernel32.GetLastError()}")
-
-    except Exception as e:
-        print(f"Exception during window resize: {e}")
 
 class HotkeyListener:
     def __init__(self, config, root, app):
         self.plugin_shortcuts = {}
         self.plugin_key_counts = {}
         self.plugin_last_press_times = {}
-        
+
         # Alternate hotkey tracking
         self.alternate_hotkey_sequences = {}  # plugin_id -> sequence state
         self.alternate_hotkey_configs = {}    # plugin_id -> config
-        
+
         self.config = config
         self.root = root  # Tkinter root window
         self.app = app  # Reference to main application
+
+        # Build VK -> unshifted char mapping for macOS canonical key normalization.
+        # On macOS, pressing Shift+4 delivers '$' instead of '4'. This table lets
+        # _canonical() map the VK code back to the unshifted character so HotKey
+        # matching works regardless of modifier state.
+        self._vk_to_char = {}
+        if sys.platform == 'darwin':
+            try:
+                from pynput._util.darwin_vks import SYMBOLS
+                for vk, ch in SYMBOLS.items():
+                    if ch.isprintable():
+                        self._vk_to_char[vk] = ch.lower()
+            except ImportError:
+                pass
+
         self.load_hotkeys()
         self.listener = None
         self.mouse_listener = None
@@ -217,6 +243,15 @@ class HotkeyListener:
     def load_hotkeys(self):
         shortcuts = self.config['Shortcuts']
 
+        # On macOS, F1-F12 are media keys by default (brightness, volume, etc.)
+        # Users must press fn+F-key to get standard function key behavior.
+        # Use Ctrl+Shift+number as macOS-friendly defaults for Shift+F-key hotkeys.
+        _is_mac = sys.platform == 'darwin'
+
+        def _mac_default(mac_default, win_default):
+            """Return macOS-friendly default if on macOS, else Windows default."""
+            return mac_default if _is_mac else win_default
+
         # Load standard hotkeys
         self.hotkey_topmost_on = keyboard.HotKey(
             keyboard.HotKey.parse(shortcuts.get('hotkey_topmost_on', '<ctrl>+<shift>+t')),
@@ -239,41 +274,50 @@ class HotkeyListener:
             self.on_activate_snip
         )
         self.hotkey_toggle_visibility = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_toggle_visibility', '<shift>+<f1>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_toggle_visibility',
+                                                _mac_default('<ctrl>+<shift>+1', '<shift>+<f1>'))),
             self.on_toggle_visibility
         )
         self.hotkey_load_image = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_load_image', '<shift>+<f2>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_load_image',
+                                                _mac_default('<ctrl>+<shift>+2', '<shift>+<f2>'))),
             self.on_activate_load_image
         )
         # Add the new hotkey for repositioning image windows
         self.hotkey_reposition_windows = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_reposition_windows', '<shift>+<f3>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_reposition_windows',
+                                                _mac_default('<ctrl>+<shift>+3', '<shift>+<f3>'))),
             self.on_reposition_windows
         )
         # Add new hotkeys for session save/load
         self.hotkey_save_session = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_save_session', '<shift>+<f4>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_save_session',
+                                                _mac_default('<ctrl>+<shift>+4', '<shift>+<f4>'))),
             self.on_save_session
         )
         self.hotkey_load_session = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_load_session', '<shift>+<f5>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_load_session',
+                                                _mac_default('<ctrl>+<shift>+5', '<shift>+<f5>'))),
             self.on_load_session
         )
         self.hotkey_session_manager = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_session_manager', '<shift>+<f6>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_session_manager',
+                                                _mac_default('<ctrl>+<shift>+6', '<shift>+<f6>'))),
             self.on_session_manager
         )
         self.hotkey_quick_notes = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_quick_notes', '<shift>+<f7>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_quick_notes',
+                                                _mac_default('<ctrl>+<shift>+7', '<shift>+<f7>'))),
             self.on_quick_notes
         )
         self.hotkey_image_gallery = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_image_gallery', '<shift>+<f8>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_image_gallery',
+                                                _mac_default('<ctrl>+<shift>+8', '<shift>+<f8>'))),
             self.on_image_gallery
         )
         self.hotkey_recover_cache = keyboard.HotKey(
-            keyboard.HotKey.parse(shortcuts.get('hotkey_recover_cache', '<shift>+<f12>')),
+            keyboard.HotKey.parse(shortcuts.get('hotkey_recover_cache',
+                                                _mac_default('<ctrl>+<shift>+0', '<shift>+<f12>'))),
             self.on_recover_cache
         )
 
@@ -284,6 +328,15 @@ class HotkeyListener:
 
     def start(self):
         print("Starting HotkeyListener (Keyboard & Mouse)")
+
+        # Debug: dump all registered hotkeys on non-Windows
+        if os.name != 'nt':
+            print("[HOTKEY DEBUG] Registered hotkeys:")
+            for name in sorted(attr for attr in dir(self) if attr.startswith('hotkey_')):
+                hk = getattr(self, name, None)
+                if hk and hasattr(hk, '_keys'):
+                    print(f"  {name}: _keys={hk._keys}")
+
         self.listener = keyboard.Listener(
             on_press=self.on_press,
             on_release=self.on_release)
@@ -315,7 +368,7 @@ class HotkeyListener:
                 return 'ctrl'
             elif key == keyboard.Key.shift or key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
                 return 'shift'
-            elif key == keyboard.Key.cmd:
+            elif key == keyboard.Key.cmd or key == keyboard.Key.cmd_l or key == keyboard.Key.cmd_r:
                 return 'cmd'
             # Add other special keys as needed
             else:
@@ -326,24 +379,63 @@ class HotkeyListener:
             except AttributeError:
                 return str(key).lower().replace('key.', '')
 
+    def _canonical(self, key):
+        """Safe canonical: avoids calling TIS APIs on background thread (macOS crash).
+
+        On macOS, pynput's listener.canonical() calls TIS APIs that must run on
+        the main thread. This replacement uses VK-based lookup (via the SYMBOLS
+        table from pynput) to map shifted characters back to their unshifted form
+        (e.g., '$' -> '4' when vk=21) so that HotKey matching works correctly
+        even when modifier keys change the delivered character.
+        """
+        from pynput.keyboard import Key, KeyCode, _NORMAL_MODIFIERS
+        if isinstance(key, KeyCode):
+            if key.vk is not None and key.vk in self._vk_to_char:
+                # Use VK-based lookup to get the unshifted character
+                # This handles cases where Shift changes '4' to '$', etc.
+                return KeyCode.from_char(self._vk_to_char[key.vk])
+            elif key.char is not None and key.char.isprintable():
+                return KeyCode.from_char(key.char.lower())
+            elif key.vk is not None:
+                return KeyCode.from_vk(key.vk)
+            return key
+        elif isinstance(key, Key) and key.value in _NORMAL_MODIFIERS:
+            return _NORMAL_MODIFIERS[key.value]
+        elif isinstance(key, Key) and hasattr(key.value, 'vk') and key.value.vk is not None:
+            return KeyCode.from_vk(key.value.vk)
+        else:
+            return key
+
     def on_press(self, key):
         if key in self.modifiers:
             self.modifiers[key] = True
 
-        self.hotkey_topmost_on.press(self.listener.canonical(key))
-        self.hotkey_topmost_off.press(self.listener.canonical(key))
-        self.hotkey_opacity_down.press(self.listener.canonical(key))
-        self.hotkey_opacity_up.press(self.listener.canonical(key))
-        self.hotkey_snip.press(self.listener.canonical(key))
-        self.hotkey_toggle_visibility.press(self.listener.canonical(key))
-        self.hotkey_load_image.press(self.listener.canonical(key))
-        self.hotkey_reposition_windows.press(self.listener.canonical(key))
-        self.hotkey_save_session.press(self.listener.canonical(key))
-        self.hotkey_load_session.press(self.listener.canonical(key))
-        self.hotkey_session_manager.press(self.listener.canonical(key))
-        self.hotkey_quick_notes.press(self.listener.canonical(key))
-        self.hotkey_image_gallery.press(self.listener.canonical(key))
-        self.hotkey_recover_cache.press(self.listener.canonical(key))
+        ck = self._canonical(key)
+        if os.name != 'nt':
+            # Debug log for macOS hotkey diagnosis
+            raw_name = key.name if isinstance(key, keyboard.Key) else repr(key)
+            ck_name = ck.name if isinstance(ck, keyboard.Key) else repr(ck)
+            vk = None
+            if isinstance(key, keyboard.Key) and hasattr(key.value, 'vk'):
+                vk = key.value.vk
+            elif hasattr(key, 'vk') and key.vk is not None:
+                vk = key.vk
+            print(f"[HOTKEY] PRESS raw={raw_name} canonical={ck_name} vk={vk}")
+
+        self.hotkey_topmost_on.press(ck)
+        self.hotkey_topmost_off.press(ck)
+        self.hotkey_opacity_down.press(ck)
+        self.hotkey_opacity_up.press(ck)
+        self.hotkey_snip.press(ck)
+        self.hotkey_toggle_visibility.press(ck)
+        self.hotkey_load_image.press(ck)
+        self.hotkey_reposition_windows.press(ck)
+        self.hotkey_save_session.press(ck)
+        self.hotkey_load_session.press(ck)
+        self.hotkey_session_manager.press(ck)
+        self.hotkey_quick_notes.press(ck)
+        self.hotkey_image_gallery.press(ck)
+        self.hotkey_recover_cache.press(ck)
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             if self.ctrl_press_count < self.ask_dialog_press_count:
@@ -353,20 +445,21 @@ class HotkeyListener:
         if key in self.modifiers:
             self.modifiers[key] = False
 
-        self.hotkey_topmost_on.release(self.listener.canonical(key))
-        self.hotkey_topmost_off.release(self.listener.canonical(key))
-        self.hotkey_opacity_down.release(self.listener.canonical(key))
-        self.hotkey_opacity_up.release(self.listener.canonical(key))
-        self.hotkey_snip.release(self.listener.canonical(key))
-        self.hotkey_toggle_visibility.release(self.listener.canonical(key))
-        self.hotkey_load_image.release(self.listener.canonical(key))
-        self.hotkey_reposition_windows.release(self.listener.canonical(key))
-        self.hotkey_save_session.release(self.listener.canonical(key))
-        self.hotkey_load_session.release(self.listener.canonical(key))
-        self.hotkey_session_manager.release(self.listener.canonical(key))
-        self.hotkey_quick_notes.release(self.listener.canonical(key))
-        self.hotkey_image_gallery.release(self.listener.canonical(key))
-        self.hotkey_recover_cache.release(self.listener.canonical(key))
+        ck = self._canonical(key)
+        self.hotkey_topmost_on.release(ck)
+        self.hotkey_topmost_off.release(ck)
+        self.hotkey_opacity_down.release(ck)
+        self.hotkey_opacity_up.release(ck)
+        self.hotkey_snip.release(ck)
+        self.hotkey_toggle_visibility.release(ck)
+        self.hotkey_load_image.release(ck)
+        self.hotkey_reposition_windows.release(ck)
+        self.hotkey_save_session.release(ck)
+        self.hotkey_load_session.release(ck)
+        self.hotkey_session_manager.release(ck)
+        self.hotkey_quick_notes.release(ck)
+        self.hotkey_image_gallery.release(ck)
+        self.hotkey_recover_cache.release(ck)
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
             current_time = time.time()
@@ -452,35 +545,96 @@ class HotkeyListener:
             except Exception as e:
                 print(f"Error activating plugin {plugin_id}: {e}")
 
+    def _get_image_window_at_cursor(self):
+        """Find the Fastshot ImageWindow under the mouse cursor (macOS)."""
+        if not hasattr(self.app, 'image_windows'):
+            return None
+        try:
+            mx = self.root.winfo_pointerx()
+            my = self.root.winfo_pointery()
+        except Exception:
+            return None
+        for iw in self.app.image_windows:
+            try:
+                w = iw.img_window
+                x, y = w.winfo_rootx(), w.winfo_rooty()
+                width, height = w.winfo_width(), w.winfo_height()
+                if x <= mx <= x + width and y <= my <= y + height:
+                    return iw
+            except Exception:
+                continue
+        return None
+
     def toggle_topmost_on(self):
-        toggle_always_on_top()
+        if _IS_WINDOWS:
+            toggle_always_on_top()
+        else:
+            self.root.after(0, self._toggle_topmost_mac)
 
     def toggle_topmost_off(self):
-        toggle_always_on_top()
+        if _IS_WINDOWS:
+            toggle_always_on_top()
+        else:
+            self.root.after(0, self._toggle_topmost_mac)
+
+    def _toggle_topmost_mac(self):
+        """Toggle always-on-top for the Fastshot window under the cursor (macOS)."""
+        iw = self._get_image_window_at_cursor()
+        if iw:
+            w = iw.img_window
+            current = w.attributes('-topmost')
+            new_val = not bool(current)
+            w.attributes('-topmost', new_val)
+            print(f"Window topmost {'ON' if new_val else 'OFF'}")
+        else:
+            print("No Fastshot window under cursor")
 
     def decrease_opacity(self):
-        hwnd = get_foreground_window()
-        if hwnd:
-            current_opacity = get_window_opacity(hwnd)
-            if current_opacity > 0.1:
-                new_opacity = current_opacity - 0.1
-            else:
-                new_opacity = 1.0  # Reset to 100% opacity
-            new_opacity = round(new_opacity, 1)  # Ensure precision
-            set_window_opacity(hwnd, new_opacity)
-            print(f"Window opacity decreased to {new_opacity * 100:.0f}%")
+        if _IS_WINDOWS:
+            hwnd = get_foreground_window()
+            if hwnd:
+                current_opacity = get_window_opacity(hwnd)
+                if current_opacity > 0.1:
+                    new_opacity = current_opacity - 0.1
+                else:
+                    new_opacity = 1.0  # Reset to 100% opacity
+                new_opacity = round(new_opacity, 1)
+                set_window_opacity(hwnd, new_opacity)
+                print(f"Window opacity decreased to {new_opacity * 100:.0f}%")
+        else:
+            self.root.after(0, lambda: self._adjust_opacity_mac(-0.1))
 
     def increase_opacity(self):
-        hwnd = get_foreground_window()
-        if hwnd:
-            current_opacity = get_window_opacity(hwnd)
-            if current_opacity < 1.0:
-                new_opacity = current_opacity + 0.1
-            else:
-                new_opacity = 0.1  # Reset to 10% opacity
-            new_opacity = round(new_opacity, 1)  # Ensure precision
-            set_window_opacity(hwnd, new_opacity)
-            print(f"Window opacity increased to {new_opacity * 100:.0f}%")
+        if _IS_WINDOWS:
+            hwnd = get_foreground_window()
+            if hwnd:
+                current_opacity = get_window_opacity(hwnd)
+                if current_opacity < 1.0:
+                    new_opacity = current_opacity + 0.1
+                else:
+                    new_opacity = 0.1  # Reset to 10% opacity
+                new_opacity = round(new_opacity, 1)
+                set_window_opacity(hwnd, new_opacity)
+                print(f"Window opacity increased to {new_opacity * 100:.0f}%")
+        else:
+            self.root.after(0, lambda: self._adjust_opacity_mac(0.1))
+
+    def _adjust_opacity_mac(self, delta):
+        """Adjust opacity of the Fastshot window under the cursor (macOS)."""
+        iw = self._get_image_window_at_cursor()
+        if iw:
+            w = iw.img_window
+            current = float(w.attributes('-alpha'))
+            new_opacity = current + delta
+            if new_opacity > 1.0:
+                new_opacity = 0.1
+            elif new_opacity < 0.1:
+                new_opacity = 1.0
+            new_opacity = round(new_opacity, 1)
+            w.attributes('-alpha', new_opacity)
+            print(f"Window opacity set to {new_opacity * 100:.0f}%")
+        else:
+            print("No Fastshot window under cursor")
 
     def on_activate_snip(self):
         print("Snipping hotkey activated")
@@ -513,14 +667,8 @@ class HotkeyListener:
         """Callback for the session manager hotkey."""
         print("Session manager hotkey activated")
         try:
-            print(f"DEBUG: self.root = {self.root}")
-            print(f"DEBUG: self.app = {self.app}")
-            print(f"DEBUG: hasattr(self.app, 'open_session_manager') = {hasattr(self.app, 'open_session_manager')}")
-            
             if hasattr(self.app, 'open_session_manager'):
-                print("DEBUG: Calling self.root.after to schedule open_session_manager")
                 self.root.after(0, self.app.open_session_manager)
-                print("DEBUG: self.root.after call completed")
             else:
                 print("ERROR: app does not have open_session_manager method")
         except Exception as e:

@@ -11,8 +11,8 @@ if os.name == 'nt':
 
 import tkinter as tk
 from pynput import keyboard
-from screeninfo import get_monitors
-import ctypes
+# Use platform-specific monitor detection for better macOS support
+from fastshot.app_platform import get_monitors
 import importlib
 import os
 import configparser
@@ -83,13 +83,22 @@ class VisibilityIndicator(tk.Toplevel):
         self.geometry(f"+{x_pos}+{y_pos}")
 
     def _set_click_through(self):
-        """Set WS_EX_TRANSPARENT style for click-through."""
+        """Set click-through style — platform-aware."""
         try:
-            hwnd = self.winfo_id()
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
-            style = style | 0x80000 | 0x20 # WS_EX_LAYERED | WS_EX_TRANSPARENT
-            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
-            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(0.85 * 255), 0x2) # LWA_ALPHA
+            if os.name == 'nt':
+                import ctypes
+                hwnd = self.winfo_id()
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
+                style = style | 0x80000 | 0x20 # WS_EX_LAYERED | WS_EX_TRANSPARENT
+                ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
+                ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, int(0.85 * 255), 0x2) # LWA_ALPHA
+            else:
+                # macOS: try pyobjc click-through
+                try:
+                    from fastshot.app_platform import window_control as _wc
+                    _wc().set_click_through(self, True)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Error setting click-through: {e}")
 
@@ -114,6 +123,10 @@ class SnipasteApp:
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.app = self  # Set reference to self in root
+
+        # Patch pynput keycode_context early to avoid macOS 26.x TIS crash
+        self._patch_pynput_darwin()
+
         self.monitors = get_monitors()
         self.snipping_tool = SnippingTool(self.root, self.monitors, self.create_image_window)
         self.windows = []
@@ -127,7 +140,7 @@ class SnipasteApp:
         self.print_config_info()
         self.check_and_download_models()
         self.load_plugins()
-        self.plugins['fastshot.plugin_ocr']=PluginOCR()
+        self.ocr_engine = PluginOCR()
         # self.plugins['fastshot.plugin_ask']=PluginAsk()
 
         # Initialize the hotkey listener
@@ -167,6 +180,8 @@ class SnipasteApp:
         sys.path.insert(0, plugins_dir)
 
         for finder, name, ispkg in pkgutil.iter_modules([plugins_dir]):
+            if ispkg:
+                continue  # Skip sub-packages like 'utils'
             try:
                 plugin_module = importlib.import_module(name)
                 plugin_info = plugin_module.get_plugin_info()
@@ -212,7 +227,50 @@ class SnipasteApp:
             # Create new dialog
             self.ask_dialog = AskDialog()
 
-        
+    @staticmethod
+    def _patch_pynput_darwin():
+        """Patch pynput for macOS compatibility.
+
+        1. Pre-compute keycode_context on main thread (macOS 26.x TIS fix).
+        2. Patch HIServices.AXIsProcessTrusted for pyobjc compatibility.
+        """
+        if sys.platform != 'darwin':
+            return
+        # Patch 1: keycode_context caching
+        try:
+            import pynput._util.darwin as _pynput_darwin
+            import contextlib
+            with _pynput_darwin.keycode_context() as ctx:
+                _cached = ctx
+            @contextlib.contextmanager
+            def _cached_keycode_context():
+                yield _cached
+            _pynput_darwin.keycode_context = _cached_keycode_context
+            import pynput.keyboard._darwin as _kd
+            _kd.keycode_context = _cached_keycode_context
+            print("Patched pynput keycode_context for macOS 26.x compatibility")
+        except Exception as e:
+            print(f"keycode_context patch skipped: {e}")
+
+        # Patch 2: AXIsProcessTrusted — pyobjc lazy import may fail to find it
+        try:
+            import pynput._util.darwin as _pynput_darwin
+            import HIServices
+            if not hasattr(HIServices, 'AXIsProcessTrusted'):
+                import ApplicationServices
+                if hasattr(ApplicationServices, 'AXIsProcessTrusted'):
+                    HIServices.AXIsProcessTrusted = ApplicationServices.AXIsProcessTrusted
+                    print("Patched HIServices.AXIsProcessTrusted from ApplicationServices")
+                else:
+                    # Fallback: use ctypes to call the C function directly
+                    import ctypes
+                    _security = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+                    _security.AXIsProcessTrusted.restype = ctypes.c_bool
+                    HIServices.AXIsProcessTrusted = _security.AXIsProcessTrusted
+                    print("Patched HIServices.AXIsProcessTrusted via ctypes")
+        except Exception as e:
+            print(f"AXIsProcessTrusted patch skipped: {e}")
+
     def load_config(self):
         config = configparser.ConfigParser()
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
@@ -233,15 +291,15 @@ class SnipasteApp:
                 'hotkey_ask_dialog_key': 'ctrl',
                 'hotkey_ask_dialog_count': '4',
                 'hotkey_ask_dialog_time_window': '1.0',
-                'hotkey_toggle_visibility': '<shift>+<f1>',
-                'hotkey_load_image': '<shift>+<f2>',
-                'hotkey_reposition_windows': '<shift>+<f3>',
-                'hotkey_save_session': '<shift>+<f4>',
-                'hotkey_load_session': '<shift>+<f5>',
-                'hotkey_session_manager': '<shift>+<f6>',
-                'hotkey_quick_notes': '<shift>+<f7>',
-                'hotkey_image_gallery': '<shift>+<f8>',  # Open fullscreen gallery view
-                'hotkey_recover_cache': '<shift>+<f12>'
+                'hotkey_toggle_visibility': '<ctrl>+<shift>+1' if sys.platform == 'darwin' else '<shift>+<f1>',
+                'hotkey_load_image': '<ctrl>+<shift>+2' if sys.platform == 'darwin' else '<shift>+<f2>',
+                'hotkey_reposition_windows': '<ctrl>+<shift>+3' if sys.platform == 'darwin' else '<shift>+<f3>',
+                'hotkey_save_session': '<ctrl>+<shift>+4' if sys.platform == 'darwin' else '<shift>+<f4>',
+                'hotkey_load_session': '<ctrl>+<shift>+5' if sys.platform == 'darwin' else '<shift>+<f5>',
+                'hotkey_session_manager': '<ctrl>+<shift>+6' if sys.platform == 'darwin' else '<shift>+<f6>',
+                'hotkey_quick_notes': '<ctrl>+<shift>+7' if sys.platform == 'darwin' else '<shift>+<f7>',
+                'hotkey_image_gallery': '<ctrl>+<shift>+8' if sys.platform == 'darwin' else '<shift>+<f8>',
+                'hotkey_recover_cache': '<ctrl>+<shift>+0' if sys.platform == 'darwin' else '<shift>+<f12>'
             }
             config['ScreenPen'] = {
                 'enable_screenpen': 'True',
@@ -341,8 +399,22 @@ class SnipasteApp:
         def on_escape():
             self.exit_all_modes()
 
+        def safe_canonical(key):
+            from pynput.keyboard import Key, KeyCode, _NORMAL_MODIFIERS
+            if isinstance(key, KeyCode):
+                if key.char is not None and key.char.isprintable():
+                    return KeyCode.from_char(key.char.lower())
+                elif key.vk is not None:
+                    return KeyCode.from_vk(key.vk)
+                return key
+            elif isinstance(key, Key) and key.value in _NORMAL_MODIFIERS:
+                return _NORMAL_MODIFIERS[key.value]
+            elif isinstance(key, Key) and hasattr(key.value, 'vk') and key.value.vk is not None:
+                return KeyCode.from_vk(key.value.vk)
+            return key
+
         def for_canonical(f):
-            return lambda k: f(self.listener.canonical(k))
+            return lambda k: f(safe_canonical(k))
 
         # 从配置文件获取快捷键
         hotkey_snip_str = self.config['Shortcuts'].get('hotkey_snip', '<shift>+a+s')
