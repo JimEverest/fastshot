@@ -21,17 +21,6 @@ if _IS_WINDOWS:
         _IS_WINDOWS = False
 
 
-def _get_retina_scale():
-    """Get the Retina backing scale factor on macOS."""
-    if not _IS_MAC:
-        return 1.0
-    try:
-        from AppKit import NSScreen
-        return NSScreen.mainScreen().backingScaleFactor() or 1.0
-    except Exception:
-        return 1.0
-
-
 class SnippingTool:
     def __init__(self, root, monitors, on_screenshot):
         self.root = root
@@ -161,15 +150,16 @@ class SnippingTool:
             # macOS needs a brief delay for window server to fully hide overlays
             time.sleep(0.15)
 
-        # On Retina Mac, tkinter uses logical "points" but mss uses physical pixels
-        scale = _get_retina_scale() if _IS_MAC else 1.0
+        # mss on macOS uses CGWindowListCreateImage which accepts logical points
+        # (same coordinate system as tkinter), so no scaling is needed.
+        # The returned image will be in physical pixels (Retina 2x) automatically.
 
         with mss.mss() as sct:
             monitor = {
-                "top": int(y1 * scale),
-                "left": int(x1 * scale),
-                "width": int((x2 - x1) * scale),
-                "height": int((y2 - y1) * scale)
+                "top": int(y1),
+                "left": int(x1),
+                "width": int(x2 - x1),
+                "height": int(y2 - y1)
             }
             screenshot = sct.grab(monitor)
             img = mss.tools.to_png(screenshot.rgb, screenshot.size)
