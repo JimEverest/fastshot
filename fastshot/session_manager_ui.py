@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import json
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path

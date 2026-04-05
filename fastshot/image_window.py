@@ -162,7 +162,15 @@ class ImageWindow:
         self.config = config
         self.root = app.root
         self.img_window = tk.Toplevel(self.root)
-        self.img_window.overrideredirect(True)
+        if sys.platform == 'darwin':
+            # Use MacWindowStyle for borderless window that still receives
+            # mouse events without requiring activation (unlike overrideredirect)
+            self.root.tk.call(
+                "::tk::unsupported::MacWindowStyle", "style",
+                self.img_window._w, "plain", "none"
+            )
+        else:
+            self.img_window.overrideredirect(True)
         self.img_window.attributes('-topmost', True)
         self.img_window.bind('<ButtonPress-1>', self.start_move)
         self.img_window.bind('<B1-Motion>', self.do_move)
@@ -198,22 +206,28 @@ class ImageWindow:
         self.setup_persistent_key_listener()
 
     def _set_macos_floating_level(self):
-        """Set NSWindow level to floating so it stays above other apps on macOS."""
+        """Set NSWindow level to floating and hide title bar on macOS."""
         try:
             from AppKit import NSApp, NSFloatingWindowLevel
-            # Find the NSWindow that corresponds to this tkinter Toplevel
             self.img_window.update_idletasks()
             for ns_window in NSApp.windows():
-                # Match by frame position
                 frame = ns_window.frame()
                 tk_x = self.img_window.winfo_x()
                 tk_y = self.img_window.winfo_y()
                 if abs(frame.origin.x - tk_x) < 5 and abs(frame.size.width - self.img_window.winfo_width()) < 5:
                     ns_window.setLevel_(NSFloatingWindowLevel)
-                    print(f"DEBUG: Set NSWindow floating level for ImageWindow at ({tk_x}, {tk_y})")
+                    # Hide title bar: make it transparent and extend content behind it
+                    ns_window.setTitlebarAppearsTransparent_(True)
+                    ns_window.setTitleVisibility_(1)  # NSWindowTitleHidden
+                    ns_window.setStyleMask_(
+                        ns_window.styleMask() | (1 << 15)  # NSWindowStyleMaskFullSizeContentView
+                    )
+                    # Hide traffic light buttons
+                    for btn_idx in range(3):
+                        btn = ns_window.standardWindowButton_(btn_idx)
+                        if btn:
+                            btn.setHidden_(True)
                     return
-            # Fallback: set level on all borderless windows
-            print("DEBUG: Could not match NSWindow, trying all windows")
         except ImportError:
             print("DEBUG: AppKit not available, topmost may not persist")
         except Exception as e:

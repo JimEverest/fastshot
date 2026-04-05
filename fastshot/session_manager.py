@@ -599,20 +599,54 @@ class SessionManager:
         """
         import threading
 
-        # Run save in background thread to avoid blocking UI
-        thread = threading.Thread(target=self._save_temp_cache_impl, daemon=True)
+        # Gather all tkinter data on the main thread (not thread-safe otherwise)
+        window_snapshots = []
+        try:
+            for i, window in enumerate(self.app.windows):
+                try:
+                    if not window.img_window.winfo_exists():
+                        continue
+                    # Read tkinter geometry on main thread
+                    try:
+                        if not window.is_hidden:
+                            window.img_window.update_idletasks()
+                        snap = {
+                            'index': i,
+                            'x': window.img_window.winfo_x(),
+                            'y': window.img_window.winfo_y(),
+                            'width': window.img_window.winfo_width(),
+                            'height': window.img_window.winfo_height(),
+                            'zoomed_image': window.img_label.zoomed_image.copy() if window.img_label.zoomed_image else None,
+                            'original_image': window.img_label.original_image.copy() if window.img_label.original_image else None,
+                            'scale': getattr(window.img_label, 'scale', 1.0),
+                            'is_hidden': window.is_hidden,
+                            'draw_history': list(window.draw_history) if hasattr(window, 'draw_history') else [],
+                        }
+                        window_snapshots.append(snap)
+                    except Exception as e:
+                        print(f"[TempCache] Error snapshotting window {i}: {e}")
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"[TempCache] Error gathering window data: {e}")
+            return
+
+        if not window_snapshots:
+            return
+
+        # Run serialization + I/O in background thread
+        thread = threading.Thread(
+            target=self._save_temp_cache_impl,
+            args=(window_snapshots,),
+            daemon=True
+        )
         thread.start()
 
-    def _save_temp_cache_impl(self):
+    def _save_temp_cache_impl(self, window_snapshots):
         """Implementation of temp cache save (runs in background thread)."""
         try:
-            # Check if there are any windows to save
-            if not self.app.windows:
-                return
-
             temp_cache_path = self.get_temp_cache_path()
 
-            # Prepare session data (similar to save_session but simplified)
             session_data = {
                 "version": "1.0",
                 "timestamp": datetime.now().isoformat(),
@@ -620,20 +654,32 @@ class SessionManager:
                 "windows": []
             }
 
-            # Collect data from all active image windows
-            for i, window in enumerate(self.app.windows):
+            for snap in window_snapshots:
                 try:
-                    if not window.img_window.winfo_exists():
+                    # Serialize images (PIL operations are thread-safe)
+                    image_data = self.serialize_image(snap['zoomed_image'])
+                    if not image_data:
+                        continue
+                    original_image_data = self.serialize_image(snap['original_image'])
+                    if not original_image_data:
                         continue
 
-                    window_data = self.serialize_window(window, i)
-                    if window_data:
-                        session_data["windows"].append(window_data)
+                    window_data = {
+                        "x": snap['x'],
+                        "y": snap['y'],
+                        "width": snap['width'],
+                        "height": snap['height'],
+                        "image": image_data,
+                        "original_image": original_image_data,
+                        "scale": snap['scale'],
+                        "is_hidden": snap['is_hidden'],
+                        "draw_history": snap['draw_history'],
+                    }
+                    session_data["windows"].append(window_data)
                 except Exception as e:
-                    print(f"[TempCache] Error serializing window {i}: {e}")
+                    print(f"[TempCache] Error serializing snapshot: {e}")
                     continue
 
-            # Only save if we have windows
             if session_data["windows"]:
                 with open(temp_cache_path, 'w', encoding='utf-8') as f:
                     json.dump(session_data, f, ensure_ascii=False)
