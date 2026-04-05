@@ -175,6 +175,10 @@ class ImageWindow:
         self.img_window.bind('<ButtonPress-1>', self.start_move)
         self.img_window.bind('<B1-Motion>', self.do_move)
         self.img_window.bind('<Button-3>', self.show_context_menu)
+        if sys.platform == 'darwin':
+            # Trackpad two-finger click may fire Button-2 on some configs
+            self.img_window.bind('<Button-2>', self.show_context_menu)
+            self.img_window.bind('<Control-Button-1>', self.show_context_menu)
         self.img_window.bind('<MouseWheel>', self.zoom)
         self.img_window.bind('<Enter>', self.activate_window)
 

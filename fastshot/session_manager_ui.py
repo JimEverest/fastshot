@@ -242,6 +242,8 @@ class SessionManagerUI:
                 context_menu.grab_release()
         
         tree.bind("<Button-3>", show_context_menu)
+        if sys.platform == 'darwin':
+            tree.bind("<Button-2>", show_context_menu)  # Tk 8.6 right-click
         tree.bind("<Double-1>", lambda e: self._load_selected_session(tab_type))
         tree.bind("<Button-1>", lambda e: self._on_tree_click(e, tree, tab_type))
         

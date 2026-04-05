@@ -70,6 +70,8 @@ class ScreenPen:
         self.canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
         self.canvas.bind("<Button-3>", self.toggle_pen_type)  # Right-click to toggle pen type
+        if sys.platform == 'darwin':
+            self.canvas.bind("<Button-2>", self.toggle_pen_type)  # Tk 8.6 right-click
 
         # Initialize queue for thread communication
         self.queue = queue.Queue()
