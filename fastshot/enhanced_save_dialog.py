@@ -10,12 +10,14 @@ from PIL import Image, ImageTk
 class EnhancedSaveDialog:
     """Enhanced save dialog with metadata fields."""
 
-    def __init__(self, parent, app, default_save_target='local', selected_windows=None):
+    def __init__(self, parent, app, default_save_target='local', selected_windows=None,
+                 default_name=''):
         self.parent = parent
         self.app = app
         self.result = None
         self.default_save_target = default_save_target
         self.selected_windows = selected_windows  # list of ImageWindow objects
+        self.default_name = default_name
 
         # Load saved tags and classes for auto-completion
         self.saved_tags = self._load_saved_tags()
@@ -142,6 +144,8 @@ class EnhancedSaveDialog:
         ttk.Label(main_frame, text="Name (used in filename):", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         self.name_entry = ttk.Entry(main_frame, font=("Arial", 10))
         self.name_entry.pack(fill=tk.X, pady=(0, 15))
+        if self.default_name:
+            self.name_entry.insert(0, self.default_name)
         
         # Description field (supports Markdown)
         desc_label_frame = ttk.Frame(main_frame)

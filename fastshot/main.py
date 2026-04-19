@@ -130,6 +130,7 @@ class SnipasteApp:
         self.monitors = get_monitors()
         self.snipping_tool = SnippingTool(self.root, self.monitors, self.create_image_window)
         self.windows = []
+        self._gallery_session_splits = []  # Persisted session split state
         self.plugins = {}
         
         # Add state for visibility toggle

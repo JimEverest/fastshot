@@ -96,13 +96,15 @@ class SessionManager:
         self.session_dir = Path.home() / ".fastshot" / "sessions"
         self.session_dir.mkdir(parents=True, exist_ok=True)
     
-    def save_session_with_dialog(self, selected_windows=None, default_save_target='local'):
+    def save_session_with_dialog(self, selected_windows=None, default_save_target='local',
+                                default_name=''):
         """Shows enhanced dialog to get metadata and saves the current session.
 
         Args:
             selected_windows: Optional list of specific windows to save.
                               If None, saves all valid windows.
             default_save_target: 'local', 'cloud', or 'notes'.
+            default_name: Pre-fill the Name field in the dialog.
         """
         try:
             # Store selected_windows as instance state so all code paths use it
@@ -125,6 +127,7 @@ class SessionManager:
                 self.app.root, self.app,
                 default_save_target=default_save_target,
                 selected_windows=valid_windows,
+                default_name=default_name,
             )
             metadata = dialog.show()
             
@@ -412,7 +415,7 @@ class SessionManager:
                 "original_image_data": original_image_data,
                 "annotated_original_data": annotated_original,
                 "draw_history": self.serialize_draw_history(window.draw_history),
-                "is_hidden": getattr(window, 'is_hidden', False),
+                "is_hidden": False,  # Always False — user explicitly included this window
                 "window_id": id(window)  # For debugging
             }
 
