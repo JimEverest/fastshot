@@ -50,7 +50,7 @@ class NotesSyncFrame(ttk.Frame):
         help_text = (
             "Note:\n"
             "1. Wrapper URL: the Siyuan Wrapper endpoint\n"
-            "   e.g. http://20.192.24.1:8806/webhook/fastshot/en\n"
+            "   e.g. http://xxxxxxx:8806/webhook/fastshot/en\n"
             "2. Encryption Key: must match the key configured in Siyuan Wrapper\n"
             "3. Session data is XOR encrypted and disguised as PNG before upload"
         )
