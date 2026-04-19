@@ -550,25 +550,35 @@ class SessionManager:
             return False
     
     def deserialize_window(self, window_data):
-        """Recreates an ImageWindow from serialized data."""
+        """Recreates an ImageWindow from serialized data.
+
+        Supports two formats:
+          - New format: original_image_data, image_data, geometry: {x, y, width, height}
+          - Old format (temp_cache): original_image, image, x, y, width, height
+        """
         try:
-            # Deserialize original image
-            original_image = self.deserialize_image(window_data["original_image_data"])
+            # Deserialize original image (compatible with both formats)
+            original_b64 = (window_data.get("original_image_data")
+                            or window_data.get("original_image"))
+            if not original_b64:
+                print("No original image data found in window_data")
+                return False
+            original_image = self.deserialize_image(original_b64)
             if not original_image:
                 print("Failed to deserialize original image")
                 return False
-            
+
             # Create new ImageWindow with original image
             from .image_window import ImageWindow
             window = ImageWindow(self.app, original_image, self.app.config)
-            
+
             # Restore scale
             scale = window_data.get("scale", 1.0)
             window.img_label.scale = scale
-            
+
             # Restore draw history
             window.draw_history = self.deserialize_draw_history(window_data.get("draw_history", []))
-            
+
             # Apply scale to the image if it's not 1.0
             if scale != 1.0:
                 new_width = int(window.img_label.original_image.width * scale)
@@ -577,32 +587,34 @@ class SessionManager:
                     window.img_label.zoomed_image = window.img_label.original_image.resize((new_width, new_height), Image.LANCZOS)
                 except Exception as e:
                     print(f"Error resizing image during load: {e}")
-                    # Fallback to original size
                     window.img_label.scale = 1.0
                     window.img_label.zoomed_image = window.img_label.original_image.copy()
-            
+
             # Redraw the image with annotations
             if window.draw_history or scale != 1.0:
                 window.redraw_image()
-            
-            # Restore geometry
-            geometry = window_data.get("geometry", {})
+
+            # Restore geometry (compatible with both formats)
+            geometry = window_data.get("geometry")
             if geometry:
                 x = geometry.get("x", 100)
                 y = geometry.get("y", 100)
-                window.img_window.geometry(f"+{x}+{y}")
-            
+            else:
+                x = window_data.get("x", 100)
+                y = window_data.get("y", 100)
+            window.img_window.geometry(f"+{x}+{y}")
+
             # Restore visibility state
             is_hidden = window_data.get("is_hidden", False)
             if is_hidden:
                 window.hide()
-            
+
             # Add to app windows list
             self.app.windows.append(window)
-            
-            print(f"Restored window at ({geometry.get('x', 0)}, {geometry.get('y', 0)}) with scale {scale}")
+
+            print(f"Restored window at ({x}, {y}) with scale {scale}")
             return True
-            
+
         except Exception as e:
             print(f"Error deserializing window: {e}")
             return False

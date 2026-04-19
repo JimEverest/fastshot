@@ -28,10 +28,8 @@ class SessionGroup:
 class ThumbnailButton(tk.Frame):
     """A clickable thumbnail with checkbox overlay, stage icon, and right-click."""
 
-    THUMB_W = 200
-    THUMB_H = 150
-
     def __init__(self, parent, image: Image.Image, index: int,
+                 thumb_size: tuple = (200, 150),
                  on_stage: bool = True,
                  on_toggle=None, on_double_click=None,
                  on_stage_toggle=None,
@@ -45,6 +43,9 @@ class ThumbnailButton(tk.Frame):
         self.on_double_click = on_double_click
         self.on_stage_toggle = on_stage_toggle
         self.on_right_click = on_right_click
+
+        # Thumbnail dimensions
+        self._thumb_w, self._thumb_h = thumb_size
 
         # Thumbnail image
         thumb = self._make_thumbnail(image)
@@ -95,11 +96,12 @@ class ThumbnailButton(tk.Frame):
     # --- thumbnail creation ---
     def _make_thumbnail(self, image: Image.Image) -> Image.Image:
         w, h = image.size
-        scale = min(self.THUMB_W / w, self.THUMB_H / h, 1.0)
+        tw, th = self._thumb_w, self._thumb_h
+        scale = min(tw / w, th / h, 1.0)
         nw, nh = int(w * scale), int(h * scale)
         thumb = image.resize((nw, nh), Image.LANCZOS)
-        canvas = Image.new("RGB", (self.THUMB_W, self.THUMB_H), (42, 42, 42))
-        canvas.paste(thumb, ((self.THUMB_W - nw) // 2, (self.THUMB_H - nh) // 2))
+        canvas = Image.new("RGB", (tw, th), (42, 42, 42))
+        canvas.paste(thumb, ((tw - nw) // 2, (th - nh) // 2))
         return canvas
 
     @staticmethod
@@ -220,6 +222,8 @@ class SessionHeader(tk.Frame):
                  on_save=None, on_noting=None, on_delete=None,
                  on_toggle_stage=None,
                  on_toggle_select=None,
+                 on_merge=None,
+                 other_sessions: list = None,
                  on_header_right_click=None):
         super().__init__(parent, bg="#333333", padx=10, pady=6)
         self.group_idx = group_idx
@@ -277,6 +281,26 @@ class SessionHeader(tk.Frame):
         _small_btn(actions, "Delete", on_delete or (lambda: None),
                    bg="#f44336").pack(side="left", padx=2)
 
+        # Merge button — shows dropdown menu of other sessions
+        if other_sessions:
+            merge_menu = tk.Menu(self, tearoff=0, bg="#3a3a3a", fg="#ffffff",
+                                activebackground="#555555", activeforeground="#ffffff",
+                                font=("Arial", 10))
+            for target_gi, target_name in other_sessions:
+                merge_menu.add_command(
+                    label=f"\u2192 {target_name}",
+                    command=lambda t=target_gi: (on_merge or (lambda _: None))(t))
+
+            def _show_merge_menu(event):
+                try:
+                    merge_menu.tk_popup(event.x_root, event.y_root)
+                finally:
+                    merge_menu.grab_release()
+
+            merge_btn = _small_btn(actions, "Merge", lambda: None, bg="#607D8B")
+            merge_btn.bind("<Button-1>", _show_merge_menu)
+            merge_btn.pack(side="left", padx=2)
+
         # Right-click on header
         for w in (self, self._name_label, self._count_label, self._collapse_btn):
             w.bind("<Button-3>", self._on_rc)
@@ -326,7 +350,7 @@ class SessionHeader(tk.Frame):
 class ImageWindowGallery(tk.Toplevel):
     """Fullscreen gallery view of all Image Windows with session split support."""
 
-    COLS = 4
+    DEFAULT_COLS = 4
 
     def __init__(self, app, on_selection_change=None):
         super().__init__(app.root)
@@ -337,11 +361,16 @@ class ImageWindowGallery(tk.Toplevel):
         self._valid_windows: list = []   # (original_index, window) pairs
         self.window_count = 0
         self._session_groups: List[SessionGroup] = []
+        self._cols_timer = None  # debounce timer for slider
+        self._dpi_scale = 1.0
 
-        # Restore persisted selection from app
+        # Restore persisted state from app
         if not hasattr(app, '_gallery_selected_indices'):
             app._gallery_selected_indices = set()
         self.selected_indices: Set[int] = app._gallery_selected_indices
+        if not hasattr(app, '_gallery_cols'):
+            app._gallery_cols = self.DEFAULT_COLS
+        self._cols = app._gallery_cols
 
         self._setup_window()
         self._create_ui()
@@ -355,6 +384,13 @@ class ImageWindowGallery(tk.Toplevel):
         self.bind("<Escape>", lambda _: self._close_gallery())
         self.bind("<F5>", lambda _: self._refresh_gallery())
         self.focus_force()
+        # Calculate DPI scale (96 dpi = 1.0, Mac Retina ~144 = 1.5, 4K@200% = 2.0)
+        self.update_idletasks()
+        try:
+            dpi = self.winfo_fpixels('1i')  # pixels per inch
+            self._dpi_scale = max(dpi / 96.0, 1.0)
+        except Exception:
+            self._dpi_scale = 1.0
 
     # ------------------------------------------------------------------ UI
     def _create_ui(self):
@@ -442,6 +478,21 @@ class ImageWindowGallery(tk.Toplevel):
         ]:
             _btn(mid_sec, text, cmd, bg=color).pack(side="left", padx=4, pady=15)
 
+        # Thumbnail size slider
+        size_sec = tk.Frame(bar, bg="#2a2a2a")
+        size_sec.pack(side="left", padx=15, fill="y")
+        tk.Label(size_sec, text="Columns:", font=("Arial", 12, "bold"),
+                 bg="#2a2a2a", fg="#ffffff").pack(side="left", padx=(0, 4))
+        self._cols_var = tk.IntVar(value=self._cols)
+        self._cols_scale = tk.Scale(
+            size_sec, from_=2, to=16, orient="horizontal",
+            variable=self._cols_var, command=self._on_cols_change,
+            bg="#2a2a2a", fg="#ffffff", troughcolor="#555555",
+            highlightthickness=0, sliderrelief="flat",
+            font=("Arial", 9), length=240, width=14,
+            showvalue=True)
+        self._cols_scale.pack(side="left", padx=4)
+
         # Action buttons
         right = tk.Frame(bar, bg="#2a2a2a")
         right.pack(side="right", padx=15, fill="y")
@@ -449,6 +500,7 @@ class ImageWindowGallery(tk.Toplevel):
             ("Close Selected", self._action_close, "#f44336"),
             ("Save Selected",  self._action_save,  "#4CAF50"),
             ("Noting Selected", self._action_noting, "#2196F3"),
+            ("New Session(Selected)", self._action_new_session, "#9C27B0"),
         ]:
             _btn(right, text, cmd, bg=color).pack(side="left", padx=4, pady=15)
         _btn(right, "Close (ESC)", self._close_gallery, bg="#555555"
@@ -464,6 +516,48 @@ class ImageWindowGallery(tk.Toplevel):
                 self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         except tk.TclError:
             pass
+
+    # ------------------------------------------------ thumbnail sizing
+    def _get_thumb_size(self) -> tuple:
+        """Calculate thumbnail (width, height) based on cols and DPI.
+
+        Fewer columns → larger thumbnails.
+        DPI scaling ensures thumbnails look proportional on Retina / HiDPI.
+        """
+        # Available canvas width (approximate — fullscreen minus padding)
+        try:
+            canvas_w = self._canvas.winfo_width()
+            if canvas_w < 100:
+                canvas_w = self.winfo_screenwidth() - 80
+        except Exception:
+            canvas_w = 1920
+
+        usable = canvas_w - 40  # padding
+        thumb_w = max(int(usable / self._cols) - 16, 80)  # 16 = padx*2
+        thumb_h = int(thumb_w * 0.75)  # 4:3 aspect ratio
+
+        # Apply DPI scale so thumbnails render sharply on Retina/HiDPI
+        thumb_w = int(thumb_w * self._dpi_scale)
+        thumb_h = int(thumb_h * self._dpi_scale)
+
+        return (thumb_w, thumb_h)
+
+    def _on_cols_change(self, val):
+        """Handle slider change — debounced: only render after 0.5s idle."""
+        new_cols = int(val)
+        # Cancel previous pending render
+        if self._cols_timer is not None:
+            self.after_cancel(self._cols_timer)
+        # Schedule render after 500ms
+        self._cols_timer = self.after(500, lambda: self._apply_cols_change(new_cols))
+
+    def _apply_cols_change(self, new_cols):
+        self._cols_timer = None
+        if new_cols == self._cols:
+            return
+        self._cols = new_cols
+        self.app._gallery_cols = new_cols
+        self._load_thumbnails()
 
     # ------------------------------------------------- session split persistence
     def _restore_splits(self):
@@ -545,22 +639,24 @@ class ImageWindowGallery(tk.Toplevel):
             tk.Label(self._inner,
                      text="No image windows found.\n\nTake a screenshot first (Shift+A+S)",
                      font=("Arial", 16), bg="#1a1a1a", fg="#666666"
-                     ).grid(row=0, column=0, columnspan=self.COLS, pady=80)
+                     ).grid(row=0, column=0, columnspan=self._cols, pady=80)
             return
 
         # Restore session splits
         self._restore_splits()
 
-        for c in range(self.COLS):
+        for c in range(self._cols):
             self._inner.grid_columnconfigure(c, weight=1)
 
         # Build all ThumbnailButton instances first (not yet placed)
+        thumb_size = self._get_thumb_size()
         for orig_idx, win in self._valid_windows:
             is_on_stage = not getattr(win, 'gallery_hidden', False)
             btn = ThumbnailButton(
                 self._inner,
                 win.img_label.original_image,
                 orig_idx,
+                thumb_size=thumb_size,
                 on_stage=is_on_stage,
                 on_toggle=self._on_toggle,
                 on_double_click=self._on_dbl_click,
@@ -575,6 +671,13 @@ class ImageWindowGallery(tk.Toplevel):
         # Place headers + thumbnails using session groups
         current_row = 0
         for gi, group in enumerate(self._session_groups):
+            # Build list of other sessions for the merge dropdown
+            other_sessions = [
+                (oj, self._session_groups[oj].name)
+                for oj in range(len(self._session_groups))
+                if oj != gi
+            ]
+
             header = SessionHeader(
                 self._inner,
                 group_idx=gi,
@@ -588,9 +691,11 @@ class ImageWindowGallery(tk.Toplevel):
                 on_delete=lambda idx=gi: self._delete_session(idx),
                 on_toggle_stage=lambda idx=gi: self._toggle_session_stage(idx),
                 on_toggle_select=lambda idx=gi: self._toggle_session_select(idx),
+                on_merge=lambda target, src=gi: self._merge_session(src, target),
+                other_sessions=other_sessions,
                 on_header_right_click=self._show_header_context_menu,
             )
-            header.grid(row=current_row, column=0, columnspan=self.COLS,
+            header.grid(row=current_row, column=0, columnspan=self._cols,
                         sticky="ew", padx=4, pady=(8, 2))
             current_row += 1
 
@@ -598,10 +703,10 @@ class ImageWindowGallery(tk.Toplevel):
                 for seq, orig_idx in enumerate(group.indices):
                     btn = self._thumbnail_map.get(orig_idx)
                     if btn:
-                        r = current_row + (seq // self.COLS)
-                        c = seq % self.COLS
+                        r = current_row + (seq // self._cols)
+                        c = seq % self._cols
                         btn.grid(row=r, column=c, padx=8, pady=8)
-                rows_used = math.ceil(len(group.indices) / self.COLS) if group.indices else 1
+                rows_used = math.ceil(len(group.indices) / self._cols) if group.indices else 1
                 current_row += rows_used
             else:
                 for orig_idx in group.indices:
@@ -822,6 +927,57 @@ class ImageWindowGallery(tk.Toplevel):
                 pass
         self._sync_stage_icons()
         self._update_sel_label()
+
+    def _merge_session(self, source_gi: int, target_gi: int):
+        """Merge source group into target group. Source group is removed."""
+        if source_gi == target_gi:
+            return
+        if source_gi < 0 or source_gi >= len(self._session_groups):
+            return
+        if target_gi < 0 or target_gi >= len(self._session_groups):
+            return
+
+        self._session_groups[target_gi].indices.extend(
+            self._session_groups[source_gi].indices)
+        self._session_groups.pop(source_gi)
+
+        self._persist_splits()
+        self._load_thumbnails()
+
+    # ------------------------------------------------ toolbar: new session
+    def _action_new_session(self):
+        """Move all selected images into a brand-new session group."""
+        if not self.selected_indices:
+            return
+
+        selected_list = sorted(self.selected_indices)
+
+        # Ask for session name
+        name = simpledialog.askstring(
+            "New Session", "Enter session name:",
+            initialvalue=f"Session {len(self._session_groups) + 1}",
+            parent=self)
+        if name is None:
+            return
+        name = name.strip() if name and name.strip() else f"Session {len(self._session_groups) + 1}"
+
+        # Remove selected indices from their current groups
+        for orig_idx in selected_list:
+            gi = self._find_group_for_orig_idx(orig_idx)
+            self._session_groups[gi].indices.remove(orig_idx)
+
+        # Remove any groups that became empty (but keep at least one)
+        self._session_groups = [g for g in self._session_groups
+                                if g.indices or len(self._session_groups) == 1]
+
+        # Create new group with selected indices, append at end
+        self._session_groups.append(SessionGroup(name=name, indices=selected_list))
+
+        # Clear selection
+        self.selected_indices.clear()
+
+        self._persist_splits()
+        self._load_thumbnails()
 
     # ------------------------------------------------ per-session actions
     def _get_group_windows(self, group_idx: int) -> List[Any]:
