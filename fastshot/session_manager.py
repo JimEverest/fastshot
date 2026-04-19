@@ -96,33 +96,50 @@ class SessionManager:
         self.session_dir = Path.home() / ".fastshot" / "sessions"
         self.session_dir.mkdir(parents=True, exist_ok=True)
     
-    def save_session_with_dialog(self):
-        """Shows enhanced dialog to get metadata and saves the current session."""
+    def save_session_with_dialog(self, selected_windows=None, default_save_target='local'):
+        """Shows enhanced dialog to get metadata and saves the current session.
+
+        Args:
+            selected_windows: Optional list of specific windows to save.
+                              If None, saves all valid windows.
+            default_save_target: 'local', 'cloud', or 'notes'.
+        """
         try:
+            # Store selected_windows as instance state so all code paths use it
+            self._pending_windows = selected_windows
+
             # Check if there are any windows to save
-            valid_windows = self._get_valid_windows()
+            if selected_windows is not None:
+                valid_windows = selected_windows
+            else:
+                valid_windows = self._get_valid_windows()
             if not valid_windows:
                 messagebox.showinfo("No Windows", "No image windows to save.")
+                self._pending_windows = None
                 return
-            
+
             # Use enhanced save dialog
             from .enhanced_save_dialog import EnhancedSaveDialog
-            
-            dialog = EnhancedSaveDialog(self.app.root, self.app)
+
+            dialog = EnhancedSaveDialog(
+                self.app.root, self.app,
+                default_save_target=default_save_target,
+                selected_windows=valid_windows,
+            )
             metadata = dialog.show()
             
             # User cancelled
             if metadata is None:
                 return
-            
-            # Check if we should save to cloud
-            if metadata.get('save_to_cloud', False) and hasattr(self.app, 'cloud_sync'):
-                # Cloud save is now handled by the enhanced save dialog with progress
-                # The dialog will show progress and handle the save operation
-                # If we get here, the save was successful (dialog only returns on success)
-                print("Cloud save completed successfully via enhanced dialog")
+
+            save_target = metadata.get('save_target', 'local')
+
+            # Cloud or Notes save: handled by enhanced dialog with progress
+            if save_target in ('cloud', 'notes'):
+                print(f"{save_target.capitalize()} save completed via enhanced dialog")
             else:
                 # Save locally with metadata
+                self._pending_windows  # ensure instance var exists
                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
                 name = metadata.get('name', '')
                 if name.strip():
@@ -141,15 +158,18 @@ class SessionManager:
                         filename = f"{timestamp}_session.fastshot"
                 
                 filepath = self.session_dir / filename
-                
+
                 # Save the session with metadata
                 if self.save_session_with_metadata(filepath, metadata):
-                    session_data = self._prepare_session_data()
+                    session_data = self._prepare_session_data(windows=self._pending_windows)
                     image_count = len(session_data.get('windows', []))
                     messagebox.showinfo("Success", f"Session saved as:\n{filename}\n\nSaved {image_count} images")
                     print(f"Session saved: {filepath} with {image_count} images")
                 else:
                     messagebox.showerror("Error", "Failed to save session.")
+
+            # Clean up pending windows
+            self._pending_windows = None
                 
         except Exception as e:
             print(f"Error in save_session_with_dialog: {e}")
@@ -178,17 +198,25 @@ class SessionManager:
         print(f"Found {len(valid_windows)} valid windows out of {len(self.app.windows)} total windows")
         return valid_windows
     
-    def _prepare_session_data(self):
-        """Prepare session data for saving."""
+    def _prepare_session_data(self, windows=None):
+        """Prepare session data for saving.
+
+        Args:
+            windows: Optional list of specific windows to serialize.
+                     If None, serializes all valid windows.
+        """
         session_data = {
             "version": "1.0",
             "timestamp": datetime.now().isoformat(),
             "windows": []
         }
-        
+
         # Get all valid windows (including hidden ones)
-        valid_windows = self._get_valid_windows()
-        
+        if windows is not None:
+            valid_windows = windows
+        else:
+            valid_windows = self._get_valid_windows()
+
         # Collect data from all valid image windows
         for i, window in enumerate(valid_windows):
             try:
@@ -208,7 +236,7 @@ class SessionManager:
     def save_session_with_metadata(self, filepath, metadata):
         """Saves the current session with metadata to a file."""
         try:
-            session_data = self._prepare_session_data()
+            session_data = self._prepare_session_data(windows=self._pending_windows)
             
             # Create thumbnail collage
             thumbnail_collage = self._create_session_thumbnail(session_data)
@@ -355,19 +383,22 @@ class SessionManager:
             except Exception as e:
                 print(f"Warning: Could not get geometry for window {index}, using defaults: {e}")
                 x, y, width, height = 100, 100, 300, 200
-            
-            # Serialize the current image (with annotations)
+
+            # Serialize the current image (with annotations, at current zoom)
             image_data = self.serialize_image(window.img_label.zoomed_image)
             if not image_data:
                 print(f"Warning: Failed to serialize zoomed image for window {index}")
                 return None
-            
-            # Serialize the original image
+
+            # Serialize the original image (100%, no annotations)
             original_image_data = self.serialize_image(window.img_label.original_image)
             if not original_image_data:
                 print(f"Error: Failed to serialize original image for window {index}")
                 return None
-            
+
+            # Create original-size image with annotations applied at scale=1.0
+            annotated_original = self._render_annotations_at_original_size(window)
+
             window_data = {
                 "index": index,
                 "geometry": {
@@ -379,11 +410,12 @@ class SessionManager:
                 "scale": getattr(window.img_label, 'scale', 1.0),
                 "image_data": image_data,
                 "original_image_data": original_image_data,
+                "annotated_original_data": annotated_original,
                 "draw_history": self.serialize_draw_history(window.draw_history),
                 "is_hidden": getattr(window, 'is_hidden', False),
                 "window_id": id(window)  # For debugging
             }
-            
+
             print(f"Successfully serialized window {index} (hidden: {window_data['is_hidden']})")
             return window_data
             
@@ -395,6 +427,18 @@ class SessionManager:
     
     def serialize_image(self, image):
         """Converts PIL Image to base64 string."""
+        try:
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            image_bytes = buffer.getvalue()
+            return base64.b64encode(image_bytes).decode('utf-8')
+        except Exception as e:
+            print(f"Error serializing image: {e}")
+            return None
+
+    @staticmethod
+    def serialize_image_static(image):
+        """Static version of serialize_image for use without instance."""
         try:
             buffer = io.BytesIO()
             image.save(buffer, format='PNG')
@@ -427,6 +471,42 @@ class SessionManager:
         except Exception as e:
             print(f"Error serializing draw history: {e}")
             return []
+
+    def _render_annotations_at_original_size(self, window):
+        """Render paint/text annotations onto a copy of the original 100% image.
+
+        Returns base64-encoded PNG, or None if there are no annotations.
+        """
+        draw_history = getattr(window, 'draw_history', [])
+        if not draw_history:
+            return None
+
+        try:
+            from PIL import ImageDraw, ImageFont
+            import sys
+
+            img = window.img_label.original_image.copy()
+            draw = ImageDraw.Draw(img)
+
+            for item in draw_history:
+                if isinstance(item, list):
+                    for (x1, y1, x2, y2) in item:
+                        draw.line((x1, y1, x2, y2), fill="red", width=3)
+                elif isinstance(item, tuple) and item[0] == 'text':
+                    _, x, y, text = item
+                    try:
+                        if sys.platform == 'darwin':
+                            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=28)
+                        else:
+                            font = ImageFont.truetype("arial", size=28)
+                    except (IOError, OSError):
+                        font = ImageFont.load_default()
+                    draw.text((x, y), text, fill="red", font=font)
+
+            return self.serialize_image(img)
+        except Exception as e:
+            print(f"Warning: Failed to render annotations at original size: {e}")
+            return None
     
     def load_session(self, filepath):
         """Loads a session from a file."""
@@ -529,7 +609,20 @@ class SessionManager:
         try:
             if not image_data:
                 return None
-            
+
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(image_bytes))
+            return image
+        except Exception as e:
+            print(f"Error deserializing image: {e}")
+            return None
+
+    @staticmethod
+    def deserialize_image_static(image_data):
+        """Static version of deserialize_image for use without instance."""
+        try:
+            if not image_data:
+                return None
             image_bytes = base64.b64decode(image_data)
             image = Image.open(io.BytesIO(image_bytes))
             return image

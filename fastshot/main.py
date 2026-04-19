@@ -154,6 +154,10 @@ class SnipasteApp:
         # Initialize cloud sync manager
         self.cloud_sync = CloudSyncManager(self)
 
+        # Initialize notes sync manager (Siyuan Wrapper)
+        from fastshot.notes_sync import NotesSyncManager
+        self.notes_sync = NotesSyncManager(self)
+
         # Initialize notes manager and cache manager
         from fastshot.notes_manager import NotesManager
         from fastshot.notes_cache import NotesCacheManager
@@ -307,6 +311,11 @@ class SnipasteApp:
                 'pen_width': '3',
                 'smooth_factor': '3',
                 'overlay_opacity': '0.4'
+            }
+            config['NotesSync'] = {
+                'notes_sync_enabled': 'False',
+                'wrapper_url': '',
+                'encryption_key': ''
             }
             with open(config_path, 'w', encoding='utf-8') as configfile:
                 config.write(configfile)

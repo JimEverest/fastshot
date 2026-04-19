@@ -5,19 +5,22 @@ from tkinter import ttk, messagebox
 import json
 from pathlib import Path
 import threading
+from PIL import Image, ImageTk
 
 class EnhancedSaveDialog:
     """Enhanced save dialog with metadata fields."""
-    
-    def __init__(self, parent, app):
+
+    def __init__(self, parent, app, default_save_target='local', selected_windows=None):
         self.parent = parent
         self.app = app
         self.result = None
-        
+        self.default_save_target = default_save_target
+        self.selected_windows = selected_windows  # list of ImageWindow objects
+
         # Load saved tags and classes for auto-completion
         self.saved_tags = self._load_saved_tags()
         self.saved_classes = self._load_saved_classes()
-        
+
         self._create_dialog()
     
     def _load_saved_tags(self):
@@ -80,36 +83,57 @@ class EnhancedSaveDialog:
         """Create the enhanced save dialog."""
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("Save Session")
-        self.dialog.geometry("500x600")
-        self.dialog.resizable(False, False)
+        self.dialog.geometry("520x750")
+        self.dialog.minsize(520, 600)
+        self.dialog.resizable(True, True)
         # Don't use transient to avoid parent window dependency issues
         # self.dialog.transient(self.parent)
         self.dialog.grab_set()
-        
+
         # Ensure window is visible and on top
         self.dialog.attributes('-topmost', True)
-        self.dialog.after(100, lambda: self.dialog.attributes('-topmost', False))  # Remove topmost after showing
-        
+        self.dialog.after(100, lambda: self.dialog.attributes('-topmost', False))
+
         # Center the dialog on screen
         self.dialog.update_idletasks()
         screen_width = self.dialog.winfo_screenwidth()
         screen_height = self.dialog.winfo_screenheight()
-        x = (screen_width // 2) - (500 // 2)
-        y = (screen_height // 2) - (600 // 2)
-        
+        x = (screen_width // 2) - (520 // 2)
+        y = (screen_height // 2) - (750 // 2)
+
         # Ensure dialog is not positioned off-screen
-        x = max(0, min(x, screen_width - 500))
-        y = max(0, min(y, screen_height - 600))
-        
-        self.dialog.geometry(f"500x600+{x}+{y}")
-        
-        print(f"DEBUG: Save dialog geometry set to: 500x600+{x}+{y}")
-        print(f"DEBUG: Screen size: {screen_width}x{screen_height}")
-        
-        # Main frame
-        main_frame = ttk.Frame(self.dialog, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
+        x = max(0, min(x, screen_width - 520))
+        y = max(0, min(y, screen_height - 750))
+
+        self.dialog.geometry(f"520x750+{x}+{y}")
+
+        # Scrollable container — prevents content being clipped
+        outer = ttk.Frame(self.dialog)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        self._scroll_canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=self._scroll_canvas.yview)
+        self._scroll_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self._scroll_canvas.pack(side="left", fill="both", expand=True)
+
+        main_frame = ttk.Frame(self._scroll_canvas, padding="20")
+        self._scroll_window_id = self._scroll_canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        # Make inner frame width track canvas width
+        def _on_canvas_configure(event):
+            self._scroll_canvas.itemconfig(self._scroll_window_id, width=event.width)
+        self._scroll_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Update scrollregion when inner frame changes size
+        main_frame.bind("<Configure>",
+                        lambda e: self._scroll_canvas.configure(
+                            scrollregion=self._scroll_canvas.bbox("all")))
+
+        # Mousewheel scrolling
+        self._scroll_canvas.bind_all("<MouseWheel>",
+            lambda e: self._scroll_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
         # Title
         title_label = ttk.Label(main_frame, text="Save Session", font=("Arial", 16, "bold"))
         title_label.pack(pady=(0, 20))
@@ -178,21 +202,47 @@ class EnhancedSaveDialog:
         self.class_listbox = tk.Listbox(main_frame, height=4)
         self.class_listbox.bind('<Double-Button-1>', self._on_class_select)
         self.class_listbox.bind('<Return>', self._on_class_select)
+
+        # ---- Image Preview Carousel ----
+        self._carousel_images = []
+        self._carousel_index = 0
+        self._build_carousel(main_frame)
         
-        # Cloud sync option
-        self.cloud_sync_var = tk.BooleanVar()
-        cloud_sync_check = ttk.Checkbutton(
-            main_frame, 
-            text="Save to cloud (if enabled)", 
-            variable=self.cloud_sync_var
-        )
-        cloud_sync_check.pack(anchor=tk.W, pady=(10, 20))
-        
-        # Check if cloud sync is available
-        if hasattr(self.app, 'cloud_sync') and self.app.cloud_sync.cloud_sync_enabled:
-            self.cloud_sync_var.set(True)
-        else:
-            cloud_sync_check.config(state='disabled')
+        # Save destination radio buttons
+        dest_label = ttk.Label(main_frame, text="Save destination:", font=("Arial", 10, "bold"))
+        dest_label.pack(anchor=tk.W, pady=(10, 5))
+
+        self.save_target_var = tk.StringVar(value=self.default_save_target)
+
+        dest_frame = ttk.Frame(main_frame)
+        dest_frame.pack(fill=tk.X, pady=(0, 15))
+
+        # Local option — always available
+        local_rb = ttk.Radiobutton(dest_frame, text="Local", variable=self.save_target_var, value="local")
+        local_rb.pack(side=tk.LEFT, padx=(0, 15))
+
+        # Cloud option — only if S3 configured
+        cloud_available = hasattr(self.app, 'cloud_sync') and self.app.cloud_sync.cloud_sync_enabled
+        cloud_rb = ttk.Radiobutton(dest_frame, text="Cloud (S3)", variable=self.save_target_var, value="cloud")
+        cloud_rb.pack(side=tk.LEFT, padx=(0, 15))
+        if not cloud_available:
+            cloud_rb.config(state='disabled')
+
+        # Notes option — only if NotesSync configured
+        notes_available = hasattr(self.app, 'notes_sync') and self.app.notes_sync.notes_sync_enabled
+        notes_rb = ttk.Radiobutton(dest_frame, text="Notes (Siyuan)", variable=self.save_target_var, value="notes")
+        notes_rb.pack(side=tk.LEFT, padx=(0, 15))
+        if not notes_available:
+            notes_rb.config(state='disabled')
+
+        # Fallback: if default target is unavailable, pick the first available one
+        available = ['local']
+        if cloud_available:
+            available.append('cloud')
+        if notes_available:
+            available.append('notes')
+        if self.default_save_target not in available:
+            self.save_target_var.set(available[0])
         
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
@@ -218,6 +268,122 @@ class EnhancedSaveDialog:
             self.color_preview.config(bg=color)
         except:
             pass
+
+    # ---- Image Carousel ----
+
+    def _build_carousel(self, parent):
+        """Build image preview carousel showing thumbnails of selected windows."""
+        # Determine which windows to show
+        if self.selected_windows is not None:
+            windows = self.selected_windows
+        else:
+            windows = []
+            for w in self.app.windows:
+                try:
+                    if (hasattr(w, 'img_window') and hasattr(w, 'img_label')
+                            and hasattr(w.img_label, 'original_image')
+                            and w.img_window.winfo_exists()):
+                        windows.append(w)
+                except Exception:
+                    continue
+
+        # Collect thumbnails
+        for w in windows:
+            try:
+                img = w.img_label.original_image
+                thumb = img.copy()
+                thumb.thumbnail((120, 90), Image.LANCZOS)
+                self._carousel_images.append(thumb)
+            except Exception:
+                continue
+
+        count = len(self._carousel_images)
+
+        # Carousel frame
+        carousel_frame = ttk.LabelFrame(parent, text=f"Images ({count})", padding="5")
+        carousel_frame.pack(fill=tk.X, pady=(0, 10))
+
+        if count == 0:
+            ttk.Label(carousel_frame, text="No images", foreground='gray').pack()
+            return
+
+        # Navigation row
+        nav = ttk.Frame(carousel_frame)
+        nav.pack(fill=tk.X)
+
+        self._carousel_left_btn = ttk.Button(nav, text="\u25C0", width=3,
+                                              command=self._carousel_prev)
+        self._carousel_left_btn.pack(side=tk.LEFT)
+
+        # Thumbnail display area (3 slots)
+        self._carousel_canvas = tk.Canvas(nav, height=90, bg='#f0f0f0',
+                                          highlightthickness=0)
+        self._carousel_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        self._carousel_right_btn = ttk.Button(nav, text="\u25B6", width=3,
+                                               command=self._carousel_next)
+        self._carousel_right_btn.pack(side=tk.RIGHT)
+
+        # Page indicator
+        self._carousel_page_label = ttk.Label(carousel_frame, text="")
+        self._carousel_page_label.pack()
+
+        self._carousel_photo_refs = []  # prevent GC
+        self._render_carousel()
+
+    def _render_carousel(self):
+        """Render current carousel page (3 thumbnails)."""
+        canvas = self._carousel_canvas
+        canvas.delete("all")
+        self._carousel_photo_refs.clear()
+
+        count = len(self._carousel_images)
+        if count == 0:
+            self._carousel_page_label.config(text="")
+            return
+
+        page_size = 3
+        start = self._carousel_index
+        end = min(start + page_size, count)
+
+        canvas.update_idletasks()
+        canvas_w = canvas.winfo_width() or 360
+        slot_w = canvas_w // page_size
+
+        for i, idx in enumerate(range(start, end)):
+            img = self._carousel_images[idx]
+            # Center the thumbnail in its slot
+            x_offset = i * slot_w + (slot_w - img.width) // 2
+            y_offset = (90 - img.height) // 2
+
+            photo = ImageTk.PhotoImage(img)
+            self._carousel_photo_refs.append(photo)
+            canvas.create_image(x_offset, y_offset, anchor='nw', image=photo)
+
+            # Draw border
+            canvas.create_rectangle(i * slot_w + 2, 2,
+                                    (i + 1) * slot_w - 2, 88,
+                                    outline='#cccccc', width=1)
+
+        # Update navigation buttons and page label
+        total_pages = max(1, (count + page_size - 1) // page_size)
+        current_page = start // page_size + 1
+        self._carousel_page_label.config(
+            text=f"{current_page}/{total_pages}  ({count} images)")
+        self._carousel_left_btn.config(state='normal' if start > 0 else 'disabled')
+        self._carousel_right_btn.config(
+            state='normal' if end < count else 'disabled')
+
+    def _carousel_prev(self):
+        if self._carousel_index > 0:
+            self._carousel_index = max(0, self._carousel_index - 3)
+            self._render_carousel()
+
+    def _carousel_next(self):
+        count = len(self._carousel_images)
+        if self._carousel_index + 3 < count:
+            self._carousel_index += 3
+            self._render_carousel()
     
     def _on_desc_focus_in(self, event):
         """Handle description field focus in."""
@@ -315,40 +481,40 @@ class EnhancedSaveDialog:
         # Get all field values
         name = self.name_entry.get().strip()
         desc = self.desc_entry.get("1.0", tk.END).strip()
-        
+
         # Check if description is placeholder text
         if desc == "Enter description here...\nSupports **bold**, *italic*, `code`, etc.":
             desc = ""
-        
+
         tags_text = self.tags_entry.get().strip()
         tags = [tag.strip() for tag in tags_text.split(',') if tag.strip()] if tags_text else []
         color = self.color_var.get()
         class_name = self.class_entry.get().strip()
-        save_to_cloud = self.cloud_sync_var.get()
-        
+        save_target = self.save_target_var.get()
+
         # Validate name field
         if name:
             # Sanitize name for filename use
             import re
             sanitized_name = re.sub(r'[^\w\-_\.]', '_', name)
             if sanitized_name != name:
-                if not messagebox.askyesno("Name Sanitized", 
+                if not messagebox.askyesno("Name Sanitized",
                                          f"Name contains invalid characters and will be changed to:\n'{sanitized_name}'\n\nContinue?"):
                     return
                 name = sanitized_name
-        
+
         # Validate required fields (optional - can be empty)
         if not name and not desc and not tags and not class_name:
-            if not messagebox.askyesno("Empty Metadata", 
+            if not messagebox.askyesno("Empty Metadata",
                                      "You haven't entered any metadata. Save anyway?"):
                 return
-        
+
         # Save tags and classes for auto-completion
         if tags:
             self._save_tags(tags)
         if class_name:
             self._save_classes(class_name)
-        
+
         # Prepare result
         self.result = {
             'name': name,
@@ -356,11 +522,11 @@ class EnhancedSaveDialog:
             'tags': tags,
             'color': color,
             'class': class_name,
-            'save_to_cloud': save_to_cloud
+            'save_target': save_target,
         }
-        
-        # If saving to cloud, show progress dialog
-        if save_to_cloud and hasattr(self.app, 'cloud_sync') and self.app.cloud_sync.cloud_sync_enabled:
+
+        # If saving to cloud or notes, show progress dialog
+        if save_target in ('cloud', 'notes'):
             self._save_with_progress()
         else:
             self.dialog.destroy()
@@ -409,20 +575,31 @@ class EnhancedSaveDialog:
     def _perform_save_operation(self):
         """Perform the actual save operation in background thread."""
         try:
-            # Get session data from app
-            session_data = self.app.session_manager._prepare_session_data()
-            
-            # Save to cloud with progress callback
-            filename = self.app.cloud_sync.save_session_to_cloud(
-                session_data, 
-                self.result, 
-                progress_callback=self._update_progress
-            )
-            
+            # Get session data from app — use pending_windows if set
+            windows = getattr(self.app.session_manager, '_pending_windows', None)
+            session_data = self.app.session_manager._prepare_session_data(windows=windows)
+
+            save_target = self.result.get('save_target', 'local')
+
+            if save_target == 'cloud':
+                filename = self.app.cloud_sync.save_session_to_cloud(
+                    session_data,
+                    self.result,
+                    progress_callback=self._update_progress
+                )
+            elif save_target == 'notes':
+                filename = self.app.notes_sync.save_session_to_notes(
+                    session_data,
+                    self.result,
+                    progress_callback=self._update_progress
+                )
+            else:
+                filename = None
+
             # Store result
             self.save_result = filename
             self.save_error = None
-            
+
         except Exception as e:
             self.save_result = None
             self.save_error = str(e)

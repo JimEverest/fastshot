@@ -15,13 +15,16 @@ class ThumbnailButton(tk.Frame):
 
     def __init__(self, parent, image: Image.Image, index: int,
                  is_visible: bool = True,
-                 on_toggle=None, on_double_click=None):
-        super().__init__(parent, bg="#2a2a2a", bd=2, relief="flat")
+                 on_toggle=None, on_double_click=None,
+                 on_visibility_toggle=None):
+        super().__init__(parent, bg="#2a2a2a", bd=2, relief="flat",
+                         highlightthickness=2, highlightbackground="#2a2a2a")
         self.index = index
         self.is_selected = False
         self.is_visible = is_visible  # whether the source ImageWindow is visible
         self.on_toggle = on_toggle
         self.on_double_click = on_double_click
+        self.on_visibility_toggle = on_visibility_toggle
 
         # Create thumbnail PIL image and keep PhotoImage reference
         thumb = self._make_thumbnail(image)
@@ -39,21 +42,27 @@ class ThumbnailButton(tk.Frame):
         self._img_label = tk.Label(self, image=self._photo, bg="#2a2a2a")
         self._img_label.pack(padx=4, pady=4)
 
-        # Checkbox in top-right corner
+        # Checkbox in top-right corner — clickable
         self._cb_label = tk.Label(self._img_label, image=self._check_off,
                                   bg="#2a2a2a", cursor="hand2")
         self._cb_label.place(relx=1.0, rely=0.0, anchor="ne", x=-4, y=4)
 
-        # Eye icon in top-left corner
+        # Eye icon in top-left corner — clickable
         self._eye_label = tk.Label(
             self._img_label,
             image=self._eye_on if self.is_visible else self._eye_off,
-            bg="#2a2a2a")
+            bg="#2a2a2a", cursor="hand2")
         self._eye_label.place(relx=0.0, rely=0.0, anchor="nw", x=4, y=4)
 
-        # Bind events on all sub-widgets so clicks always register
-        for w in (self, self._img_label, self._cb_label):
-            w.bind("<Button-1>", self._on_click)
+        # Bind click events
+        # Clicking checkbox toggles selection
+        self._cb_label.bind("<Button-1>", self._on_checkbox_click)
+        # Clicking eye toggles visibility
+        self._eye_label.bind("<Button-1>", self._on_eye_click)
+        # Clicking image body toggles selection
+        for w in (self, self._img_label):
+            w.bind("<Button-1>", self._on_body_click)
+        # Double-click on image body focuses window
         for w in (self, self._img_label):
             w.bind("<Double-Button-1>", self._on_dbl_click)
             w.bind("<Enter>", self._on_enter)
@@ -83,25 +92,21 @@ class ThumbnailButton(tk.Frame):
 
     @staticmethod
     def _make_eye_icon(visible: bool) -> Image.Image:
-        """Draw a small eye icon. Open eye = visible, closed eye = hidden."""
+        """Draw a small eye icon. Open eye = red (visible), closed eye = gray (hidden)."""
         sz = 22
         img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         cx, cy = sz // 2, sz // 2
 
         if visible:
-            # Open eye - bright
-            color = (255, 255, 255, 220)
-            # Eye outline (ellipse-like with arcs)
+            # Red open eye — highly visible
+            color = (255, 60, 60, 240)
             d.ellipse([3, 6, sz - 4, sz - 6], outline=color, width=2)
-            # Pupil
             d.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=color)
         else:
-            # Closed eye - dim
+            # Gray closed eye
             color = (120, 120, 120, 160)
-            # Horizontal line for closed eye
             d.line([(3, cy), (sz - 4, cy)], fill=color, width=2)
-            # Small downward arcs
             d.arc([3, cy - 4, sz - 4, cy + 6], start=0, end=180, fill=color, width=2)
 
         return img
@@ -112,21 +117,47 @@ class ThumbnailButton(tk.Frame):
         self._apply_visual()
 
     def set_visible(self, val: bool):
-        """Update the eye icon to reflect visibility state."""
+        """Update the eye icon and border to reflect visibility state."""
         self.is_visible = val
         self._eye_label.configure(image=self._eye_on if val else self._eye_off)
+        border_color = "#e63946" if val else self._get_bg()
+        self.configure(highlightbackground=border_color)
+
+    def _get_bg(self):
+        """Get background color based on selection state."""
+        return "#1a4a1a" if self.is_selected else "#2a2a2a"
 
     def _apply_visual(self):
-        self._cb_label.configure(image=self._check_on if self.is_selected
-                                 else self._check_off)
-        bg = "#1a4a1a" if self.is_selected else "#2a2a2a"
+        bg = self._get_bg()
+        self._cb_label.configure(
+            image=self._check_on if self.is_selected else self._check_off,
+            bg=bg)
         self.configure(bg=bg)
         self._img_label.configure(bg=bg)
-        self._cb_label.configure(bg=bg)
         self._eye_label.configure(bg=bg)
+        # Red inner border for visible windows
+        border_color = "#e63946" if self.is_visible else bg
+        self.configure(highlightbackground=border_color, highlightthickness=2)
 
     # --- events ---
-    def _on_click(self, _event=None):
+    def _on_checkbox_click(self, event=None):
+        """Toggle selection when checkbox is clicked."""
+        self.is_selected = not self.is_selected
+        self._apply_visual()
+        if self.on_toggle:
+            self.on_toggle(self.index)
+        return "break"  # prevent event propagation to body
+
+    def _on_eye_click(self, event=None):
+        """Toggle visibility when eye icon is clicked."""
+        self.is_visible = not self.is_visible
+        self._eye_label.configure(image=self._eye_on if self.is_visible else self._eye_off)
+        if self.on_visibility_toggle:
+            self.on_visibility_toggle(self.index, self.is_visible)
+        return "break"  # prevent event propagation to body
+
+    def _on_body_click(self, _event=None):
+        """Toggle selection when thumbnail body is clicked."""
         self.is_selected = not self.is_selected
         self._apply_visual()
         if self.on_toggle:
@@ -137,14 +168,27 @@ class ThumbnailButton(tk.Frame):
             self.on_double_click(self.index)
 
     def _on_enter(self, _event=None):
+        """Hover highlight — preserve icon visibility and visible border."""
         if not self.is_selected:
-            self.configure(bg="#3a3a3a")
-            self._img_label.configure(bg="#3a3a3a")
+            bg = "#3a3a3a"
+            self.configure(bg=bg)
+            self._img_label.configure(bg=bg)
+            self._cb_label.configure(bg=bg)
+            self._eye_label.configure(bg=bg)
+            # Keep red border for visible windows
+            border_color = "#e63946" if self.is_visible else bg
+            self.configure(highlightbackground=border_color)
 
     def _on_leave(self, _event=None):
-        if not self.is_selected:
-            self.configure(bg="#2a2a2a")
-            self._img_label.configure(bg="#2a2a2a")
+        """Restore normal background — preserve icon visibility and visible border."""
+        bg = self._get_bg()
+        self.configure(bg=bg)
+        self._img_label.configure(bg=bg)
+        self._cb_label.configure(bg=bg)
+        self._eye_label.configure(bg=bg)
+        # Keep red border for visible windows
+        border_color = "#e63946" if self.is_visible else bg
+        self.configure(highlightbackground=border_color)
 
 
 class ImageWindowGallery(tk.Toplevel):
@@ -256,6 +300,9 @@ class ImageWindowGallery(tk.Toplevel):
         mid_sec.pack(side="left", padx=15, fill="y")
         tk.Label(mid_sec, text="Visibility:", font=("Arial", 12, "bold"),
                  bg="#2a2a2a", fg="#ffffff").pack(side="left", padx=(0, 8))
+        self._vis_label = tk.Label(mid_sec, text="Visible: 0/0", font=("Arial", 12),
+                                   bg="#2a2a2a", fg="#8BC34A")
+        self._vis_label.pack(side="left", padx=(0, 8))
         for text, cmd, color in [
             ("Show Selected Only", self._show_selected_only, "#FF9800"),
             ("Show All",           self._show_all,           "#8BC34A"),
@@ -267,9 +314,9 @@ class ImageWindowGallery(tk.Toplevel):
         right = tk.Frame(bar, bg="#2a2a2a")
         right.pack(side="right", padx=15, fill="y")
         for text, cmd, color in [
-            ("Export Selected", self._action_export, "#2196F3"),
             ("Close Selected", self._action_close, "#f44336"),
             ("Save Selected",  self._action_save,  "#4CAF50"),
+            ("Noting Selected", self._action_noting, "#2196F3"),
         ]:
             _btn(right, text, cmd, bg=color).pack(side="left", padx=4, pady=15)
         _btn(right, "Close (ESC)", self._close_gallery, bg="#555555"
@@ -280,7 +327,11 @@ class ImageWindowGallery(tk.Toplevel):
         self._canvas.itemconfig(self._inner_id, width=event.width)
 
     def _on_mousewheel(self, event):
-        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        try:
+            if self._canvas.winfo_exists():
+                self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
 
     # --------------------------------------------------------- load thumbnails
     def _load_thumbnails(self):
@@ -327,6 +378,7 @@ class ImageWindowGallery(tk.Toplevel):
                 is_visible=is_vis,
                 on_toggle=self._on_toggle,
                 on_double_click=self._on_dbl_click,
+                on_visibility_toggle=self._on_visibility_toggle,
             )
             # Restore persisted selection
             if orig_idx in self.selected_indices:
@@ -363,9 +415,26 @@ class ImageWindowGallery(tk.Toplevel):
         except Exception:
             pass
 
+    def _on_visibility_toggle(self, index: int, visible: bool):
+        """Handle visibility toggle from eye icon click."""
+        try:
+            win = self.app.windows[index]
+            if visible:
+                win.show()
+                win.gallery_hidden = False
+            else:
+                win.hide()
+                win.gallery_hidden = True
+        except Exception:
+            pass
+        self._update_sel_label()
+
     def _update_sel_label(self):
+        vis_count = sum(1 for _, win in self._valid_windows if not getattr(win, 'is_hidden', False))
         self._sel_label.configure(
             text=f"Selected: {len(self.selected_indices)} / {self.window_count}")
+        if hasattr(self, '_vis_label'):
+            self._vis_label.configure(text=f"Visible: {vis_count}/{self.window_count}")
 
     def _select_all(self):
         self.selected_indices.clear()
@@ -427,11 +496,6 @@ class ImageWindowGallery(tk.Toplevel):
         self._sync_eye_icons()
 
     # ---------------------------------------------------------- actions
-    def _action_export(self):
-        if not self.selected_indices:
-            return
-        print(f"Export action: {len(self.selected_indices)} images selected")
-
     def _action_close(self):
         if not self.selected_indices:
             return
@@ -451,16 +515,45 @@ class ImageWindowGallery(tk.Toplevel):
         self.after(300, self._refresh_gallery)
 
     def _action_save(self):
+        """Open save dialog for selected windows, defaulting to Cloud."""
         if not self.selected_indices:
             return
-        print(f"Save action: {len(self.selected_indices)} images selected")
+        selected = self.get_selected_windows()
+        # Close gallery first — it's fullscreen topmost and would cover the dialog
+        self._cleanup()
+        self.destroy()
+        self.app.session_manager.save_session_with_dialog(
+            selected_windows=selected,
+            default_save_target='cloud',
+        )
+
+    def _action_noting(self):
+        """Open save dialog for selected windows, defaulting to Notes."""
+        if not self.selected_indices:
+            return
+        selected = self.get_selected_windows()
+        # Close gallery first — it's fullscreen topmost and would cover the dialog
+        self._cleanup()
+        self.destroy()
+        self.app.session_manager.save_session_with_dialog(
+            selected_windows=selected,
+            default_save_target='notes',
+        )
 
     # ---------------------------------------------------------- misc
     def _refresh_gallery(self):
         self._load_thumbnails()
 
+    def _cleanup(self):
+        """Unbind global mousewheel before destroying the window."""
+        try:
+            self._canvas.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
     def _close_gallery(self):
         # Selection is already persisted via app._gallery_selected_indices (same object)
+        self._cleanup()
         self.destroy()
 
     def get_selected_windows(self) -> List[Any]:
