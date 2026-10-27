@@ -40,6 +40,7 @@ setup(
     package_data={
         'fastshot': [
             'config.ini',
+            'config.ini.example',
             '_config_reset.ini',
             'plugins/*',
             'plugins/utils/*',

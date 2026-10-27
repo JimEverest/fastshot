@@ -26,9 +26,11 @@ jobs:
     - name: Clean dist folder
       run: rm -rf dist
 
-    # 检查 config.ini 文件内容，确保最新
-    - name: Check config.ini contents
-      run: cat fastshot/config.ini  # 可选步骤，用于验证 config.ini 是最新的
+    # config.ini 不再入库（可能含本地密钥）；发行包的默认配置从无密钥模板生成
+    - name: Prepare config.ini from template
+      run: |
+        cp fastshot/config.ini.example fastshot/config.ini
+        cat fastshot/config.ini
 
     # 构建项目
     - name: Build package
