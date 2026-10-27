@@ -198,6 +198,14 @@ class ImageWindow:
         self.llm_extractor = LLMExtractor()
         self.is_hidden = False # Track visibility state
         self.gallery_hidden = False  # Track if hidden by gallery visibility controls
+        # Free the Tk display bitmap of hidden windows to cut memory when many
+        # image windows are open (rebuilt on show). Toggle via config
+        # [Performance] release_hidden_image_cache; default ON.
+        try:
+            self.release_hidden_cache = self.app.config.getboolean(
+                'Performance', 'release_hidden_image_cache', fallback=True)
+        except Exception:
+            self.release_hidden_cache = True
         self.zoom_indicator_ref = None # Reference to the zoom indicator
         self.context_menu_active = False  # Track if context menu is active
         self.context_menu = None  # Store reference to context menu
@@ -402,6 +410,19 @@ class ImageWindow:
         # Update indicator if windows are hidden and this window was part of the count
         if hasattr(self.app, 'all_windows_hidden') and self.app.all_windows_hidden and was_hidden:
              self.app.update_indicator_on_close()
+
+        # Release the large per-window buffers promptly instead of waiting on GC —
+        # the original/zoomed PIL images plus the Tk PhotoImage dominate memory and
+        # may otherwise linger (reference cycles, cached lists). Safe: the window
+        # is already destroyed and removed from app.windows above.
+        try:
+            if getattr(self, 'img_label', None) is not None:
+                for _attr in ('original_image', 'zoomed_image', 'image'):
+                    if hasattr(self.img_label, _attr):
+                        setattr(self.img_label, _attr, None)
+        except Exception:
+            pass
+        self.draw_history = []
 
     def save_as(self):
         file_path = filedialog.asksaveasfilename(
@@ -698,11 +719,29 @@ class ImageWindow:
         if self.img_window.winfo_exists() and not self.is_hidden:
             self.img_window.withdraw()
             self.is_hidden = True
+            # Free the Tk display bitmap (ImageTk.PhotoImage) while hidden — with
+            # many hidden windows this is a large share of the memory. It is rebuilt
+            # on show() from original_image + draw_history. original_image/zoomed_image
+            # are intentionally KEPT, because session save serializes hidden windows.
+            if getattr(self, 'release_hidden_cache', True):
+                try:
+                    self.img_label.config(image='')
+                    self.img_label.image = None
+                except Exception:
+                    pass
             print(f"Hiding window: {self.img_window.winfo_id()}")
 
     def show(self):
         """Shows the image window."""
         if self.img_window.winfo_exists() and self.is_hidden:
+            # Rebuild the display bitmap that hide() dropped.
+            if getattr(self, 'release_hidden_cache', True):
+                try:
+                    if getattr(self.img_label, 'image', None) is None and \
+                       getattr(self.img_label, 'original_image', None) is not None:
+                        self.redraw_image()
+                except Exception as e:
+                    print(f"Error rebuilding image on show: {e}")
             self.img_window.deiconify()
             self.is_hidden = False
             print(f"Showing window: {self.img_window.winfo_id()}")

@@ -315,8 +315,14 @@ class SnipasteApp:
             }
             config['NotesSync'] = {
                 'notes_sync_enabled': 'False',
-                'wrapper_url': '',
-                'encryption_key': ''
+                'ingest_url': 'https://json-validator.centralindia.cloudapp.azure.com/ingest',
+                'api_key': '',
+                'encryption_key': 'qwer1234'
+            }
+            config['Performance'] = {
+                # Free hidden image windows' display bitmap to save memory (rebuilt
+                # on show). Set False to keep the old always-resident behavior.
+                'release_hidden_image_cache': 'True'
             }
             with open(config_path, 'w', encoding='utf-8') as configfile:
                 config.write(configfile)

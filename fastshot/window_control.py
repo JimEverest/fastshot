@@ -326,6 +326,67 @@ class HotkeyListener:
         self.ask_dialog_press_count = int(shortcuts.get('hotkey_ask_dialog_count', '4'))
         self.ask_dialog_time_window = float(shortcuts.get('hotkey_ask_dialog_time_window', '1.0'))
 
+        # Guard against stuck-key phantom triggers: a fired hotkey clears all
+        # matcher state (see _wrap_all_activations / _reset_all_hotkey_state).
+        self._wrap_all_activations()
+
+    def _iter_hotkeys(self):
+        """Yield every pynput HotKey object held on this listener."""
+        for name in dir(self):
+            if name.startswith('hotkey_'):
+                hk = getattr(self, name, None)
+                if hk is not None and hasattr(hk, '_state') and hasattr(hk, '_keys'):
+                    yield hk
+
+    def _reset_all_hotkey_state(self):
+        """Drop any keys left stuck in the hotkey matchers.
+
+        pynput's HotKey only clears a key from its ``_state`` on that key's
+        release event. If a release is swallowed (the action grabbed focus / a
+        window opened), the key stays 'pressed' forever and a later, unrelated
+        chord can complete the stale ``_state`` and re-fire the old hotkey. We
+        never touch ``self.modifiers`` here — that is physical-state tracking
+        kept in sync by on_press/on_release and used by on_scroll.
+        """
+        for hk in self._iter_hotkeys():
+            try:
+                hk._state.clear()
+            except Exception:
+                pass
+
+    def _wrap_all_activations(self):
+        """Make every hotkey clear all matcher state the moment it fires.
+
+        Done BEFORE the real action runs, so the focus change the action may
+        cause cannot leave keys stuck. load_hotkeys() recreates the HotKey
+        objects, so re-running it re-wraps fresh callbacks (no double dispatch);
+        the guard flag prevents wrapping an already-wrapped callback twice.
+        """
+        for hk in self._iter_hotkeys():
+            orig = getattr(hk, '_on_activate', None)
+            if orig is None or getattr(orig, '_fastshot_wrapped', False):
+                continue
+
+            def make(cb):
+                def _activate():
+                    self._reset_all_hotkey_state()
+                    return cb()
+                _activate._fastshot_wrapped = True
+                return _activate
+
+            hk._on_activate = make(orig)
+
+    def _is_modifier_key(self, key):
+        """True if key is a Ctrl/Shift/Alt/Cmd variant (a chord 'glue' key)."""
+        try:
+            Key = keyboard.Key
+            return key in (Key.ctrl, Key.ctrl_l, Key.ctrl_r,
+                           Key.shift, Key.shift_l, Key.shift_r,
+                           Key.alt, Key.alt_l, Key.alt_r, getattr(Key, 'alt_gr', None),
+                           Key.cmd, Key.cmd_l, Key.cmd_r)
+        except Exception:
+            return False
+
     def start(self):
         print("Starting HotkeyListener (Keyboard & Mouse)")
 
@@ -444,6 +505,12 @@ class HotkeyListener:
     def on_release(self, key):
         if key in self.modifiers:
             self.modifiers[key] = False
+
+        # When a modifier lifts, the chord is over: drop any keys still stuck in
+        # the matchers (e.g. an F-key whose release was swallowed by a focus
+        # change) so a later chord can't re-fire a stale hotkey.
+        if self._is_modifier_key(key):
+            self._reset_all_hotkey_state()
 
         ck = self._canonical(key)
         self.hotkey_topmost_on.release(ck)

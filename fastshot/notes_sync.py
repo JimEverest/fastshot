@@ -2,7 +2,8 @@
 
 import json
 import io
-import configparser
+import time
+import uuid
 import os
 from datetime import datetime
 from PIL import Image
@@ -14,17 +15,30 @@ except ImportError:
 
 
 class NotesSyncManager:
-    """Syncs encrypted session data to Siyuan Wrapper via /webhook/fastshot/en.
+    """Submit a saved session to LifeOS via the unified `/ingest` endpoint.
 
-    Uses the same XOR + FHDR steganography as cloud_sync.py / hyder_tool_app.py,
-    ensuring the Wrapper can decrypt the payload.
+    Wire format (LifeOS Ingestion Contract v2): the whole capture is ONE JSON
+    object (markdown + images-as-base64 + meta), XOR-obfuscated and hidden inside
+    a real PNG using the FileHyder format ([cover PNG][FHDR][xor(payload)]) — the
+    same envelope cloud_sync.py / hyder_tool_app.py use. It is uploaded as a single
+    multipart `file` part, authenticated with a Bearer API key header.
+
+    Two independent secrets, both from config.ini [NotesSync]:
+      - api_key         → Authorization: Bearer <api_key>   (authentication)
+      - encryption_key  → the XOR key for the envelope       (obfuscation)
+    They are different strings; keep each exact (case matters).
+
+    The legacy `/webhook/fastshot/en` path and its Fastshot-specific
+    {session, metadata} body are retired; LifeOS organizes/indexes server-side.
     """
 
     MARKER = b'FHDR'
+    DEFAULT_INGEST_URL = "https://json-validator.centralindia.cloudapp.azure.com/ingest"
 
     def __init__(self, app):
         self.app = app
-        self.wrapper_url = ''
+        self.ingest_url = ''
+        self.api_key = ''
         self.encryption_key = ''
         self._enabled = False
         self._load_config()
@@ -34,7 +48,11 @@ class NotesSyncManager:
         try:
             config = self.app.config
             if config.has_section('NotesSync'):
-                self.wrapper_url = config.get('NotesSync', 'wrapper_url', fallback='').strip()
+                self.ingest_url = config.get('NotesSync', 'ingest_url', fallback='').strip()
+                # Back-compat: fall back to the old wrapper_url key if ingest_url unset.
+                if not self.ingest_url:
+                    self.ingest_url = config.get('NotesSync', 'wrapper_url', fallback='').strip()
+                self.api_key = config.get('NotesSync', 'api_key', fallback='').strip()
                 self.encryption_key = config.get('NotesSync', 'encryption_key', fallback='').strip()
                 self._enabled = config.getboolean('NotesSync', 'notes_sync_enabled', fallback=False)
             else:
@@ -43,12 +61,15 @@ class NotesSyncManager:
             print(f"[NotesSync] Error loading config: {e}")
             self._enabled = False
 
-        # Enable only when all required fields are present
-        if self._enabled and (not self.wrapper_url or not self.encryption_key):
-            print("[NotesSync] wrapper_url or enc_key missing, disabled")
+        if not self.ingest_url:
+            self.ingest_url = self.DEFAULT_INGEST_URL
+
+        # Enable only when all required fields are present.
+        if self._enabled and (not self.ingest_url or not self.api_key or not self.encryption_key):
+            print("[NotesSync] ingest_url / api_key / encryption_key missing, disabled")
             self._enabled = False
 
-        print(f"[NotesSync] enabled={self._enabled}, url={self.wrapper_url or '(not set)'}")
+        print(f"[NotesSync] enabled={self._enabled}, url={self.ingest_url or '(not set)'}")
 
     @property
     def notes_sync_enabled(self):
@@ -70,7 +91,7 @@ class NotesSyncManager:
     def _disguise_in_image(self, data: bytes) -> bytes:
         """Append encrypted data after a cover PNG with FHDR marker.
 
-        Same format as cloud_sync._disguise_in_image and hyder_tool_app:
+        Format (shared with cloud_sync / hyder_tool_app):
             [valid PNG bytes] [FHDR] [encrypted payload]
         """
         try:
@@ -90,120 +111,169 @@ class NotesSyncManager:
             print(f"[NotesSync] Error disguising data: {e}")
             return data
 
+    # ------------------------------------------------------------ payload
+
+    @staticmethod
+    def _best_image_b64(window: dict):
+        """Best-quality image for a window, as the already-base64 PNG string.
+
+        Fallback chain mirrors the legacy server: annotated original (100% + marks)
+        > original (no marks) > current zoomed.
+        """
+        return (window.get('annotated_original_data')
+                or window.get('original_image_data')
+                or window.get('image_data'))
+
+    def _build_capture(self, session_data: dict, metadata: dict, client_msg_id: str) -> dict:
+        """Turn a Fastshot session into the LifeOS contract-v2 inner JSON.
+
+        Each window becomes one image (base64 in `images[]`) referenced from the
+        Markdown body as `![](shot_NN.png)`.
+        """
+        windows = session_data.get('windows', []) or []
+        images = []
+        refs = []
+        for i, w in enumerate(windows, start=1):
+            b64 = self._best_image_b64(w)
+            if not b64:
+                continue
+            name = f"shot_{i:02d}.png"
+            images.append({"filename": name, "mime_type": "image/png", "data_base64": b64})
+            refs.append(f"![]({name})")
+
+        name = (metadata.get('name') or '').strip()
+        desc = (metadata.get('desc') or '').strip()
+        tags = metadata.get('tags', []) or []
+        klass = (metadata.get('class') or '').strip()
+
+        lines = [f"# {name or 'Fastshot capture'}", ""]
+        if desc:
+            lines += [desc, ""]
+        info = []
+        if tags:
+            info.append("**Tags**: " + ", ".join(str(t) for t in tags))
+        if klass:
+            info.append("**Class**: " + klass)
+        info.append(f"**Images**: {len(images)}")
+        lines += info + [""]
+        lines += refs
+        content_markdown = "\n".join(lines) + "\n"
+
+        return {
+            "source": "fastshot",
+            "client_msg_id": client_msg_id,
+            "title": name or f"Fastshot {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "created_at": datetime.now().astimezone().isoformat(),
+            "content_markdown": content_markdown,
+            "tags": [str(t) for t in tags],
+            "participants": [],
+            "meta": {
+                "client": "fastshot",
+                "desc": desc,
+                "color": metadata.get('color', 'blue'),
+                "class": klass,
+                "image_count": len(images),
+            },
+            "images": images,
+        }
+
     # ------------------------------------------------------------ public API
 
     def save_session_to_notes(self, session_data: dict, metadata: dict,
                               progress_callback=None) -> str:
-        """Encrypt, disguise, and POST session to Siyuan Wrapper.
+        """Encrypt, disguise, and POST a session to LifeOS `/ingest`.
 
         Args:
-            session_data: The 'session' dict from _prepare_session_data().
+            session_data: The dict from SessionManager._prepare_session_data().
             metadata: Dict with name, desc, tags, color, class.
             progress_callback: callable(progress_pct, message).
 
         Returns:
-            The session filename on success.
+            A display filename on success.
 
         Raises:
             Exception on any failure.
         """
         if requests is None:
             raise Exception("requests library not installed")
-
         if not self._enabled:
             raise Exception("Notes sync is not enabled")
 
         if progress_callback:
             progress_callback(0, "Preparing session data...")
 
-        # Build full session payload (same structure as cloud_sync)
-        from .session_manager import SessionManager, ThumbnailCreator
-
-        # Create thumbnail
-        images = []
-        for w in session_data.get('windows', []):
-            img_data = w.get('original_image_data')
-            if img_data:
-                img = SessionManager.deserialize_image_static(img_data)
-                if img:
-                    images.append(img)
-
-        thumbnail_data = None
-        if images:
-            collage = ThumbnailCreator.create_thumbnail_collage(images)
-            if collage:
-                thumbnail_data = SessionManager.serialize_image_static(collage)
+        # Stable idempotency key for this save (reused across retries → no dup note).
+        client_msg_id = uuid.uuid4().hex
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        name = metadata.get('name', '')
-        if name.strip():
+        name = (metadata.get('name') or '').strip()
+        if name:
             safe_name = "".join(c for c in name[:30] if c.isalnum() or c in (' ', '-', '_')).strip()
             filename = f"{timestamp}_{safe_name}.fastshot"
         else:
             filename = f"{timestamp}_notes_session.fastshot"
 
-        full_session = {
-            'session': session_data,
-            'metadata': {
-                'name': metadata.get('name', ''),
-                'desc': metadata.get('desc', ''),
-                'tags': metadata.get('tags', []),
-                'color': metadata.get('color', 'blue'),
-                'class': metadata.get('class', ''),
-                'created_at': datetime.now().isoformat(),
-                'filename': filename,
-                'image_count': len(session_data.get('windows', [])),
-                'thumbnail_collage': thumbnail_data,
-            }
-        }
+        capture = self._build_capture(session_data, metadata, client_msg_id)
+        if not capture["images"]:
+            raise Exception("No image windows to submit")
 
         if progress_callback:
-            progress_callback(30, "encoding session data...")
+            progress_callback(30, "Encoding capture...")
 
-        # JSON → bytes
-        json_bytes = json.dumps(full_session, ensure_ascii=False).encode('utf-8')
-        print(f"[NotesSync] Session JSON size: {len(json_bytes)} bytes")
-
-        # Encrypt
+        # JSON → bytes → XOR → disguise as PNG (FileHyder envelope).
+        json_bytes = json.dumps(capture, ensure_ascii=False).encode('utf-8')
+        print(f"[NotesSync] capture JSON size: {len(json_bytes)} bytes, images={len(capture['images'])}")
         encrypted = self._encrypt_data(json_bytes)
-        print(f"[NotesSync] XOR encoded ({self.encryption_key[:2]}***), size: {len(encrypted)} bytes")
 
         if progress_callback:
             progress_callback(50, "Disguising as image...")
-
-        # Disguise
         disguised = self._disguise_in_image(encrypted)
-        print(f"[NotesSync] fill as PNG (cover.png + FHDR marker), size: {len(disguised)} bytes")
+        print(f"[NotesSync] envelope size: {len(disguised)} bytes (cover.png + FHDR + XOR)")
 
         if progress_callback:
-            progress_callback(70, "sync to Siyuan Wrapper...")
+            progress_callback(70, "Submitting to LifeOS...")
 
-        # POST multipart
-        files = {
-            'file': (filename, disguised, 'image/png'),
-        }
-        data = {}
-        # Optionally send key in form data (Wrapper can use config key instead)
-        # data['key'] = self.encryption_key
+        files = {'file': (f"{timestamp}.png", disguised, 'image/png')}
+        headers = {'Authorization': f'Bearer {self.api_key}'}
 
-        print(f"[NotesSync] POST {self.wrapper_url}, file={filename} ({len(disguised)} bytes)")
-        resp = requests.post(
-            self.wrapper_url,
-            files=files,
-            data=data,
-            timeout=60,
-        )
+        # Honor the contract's retry guidance: reuse the same client_msg_id so a
+        # network/5xx retry is idempotent (server returns the same doc_id).
+        print(f"[NotesSync] POST {self.ingest_url} ({len(disguised)} bytes)")
+        last_err = None
+        for attempt, delay in enumerate(((0, 1), (1, 4), (2, 0)), start=0):
+            try:
+                resp = requests.post(self.ingest_url, files=files, headers=headers, timeout=60)
+            except Exception as e:
+                last_err = f"network error: {e}"
+                print(f"[NotesSync] {last_err} (attempt {attempt})")
+                if delay[1]:
+                    time.sleep(delay[1])
+                continue
 
-        if progress_callback:
-            progress_callback(90, "Processing response...")
+            if resp.status_code == 200:
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = {}
+                doc_id = body.get('doc_id', '?')
+                deduped = body.get('deduped')
+                print(f"[NotesSync] OK doc_id={doc_id} deduped={deduped} assets={body.get('assets')}")
+                if progress_callback:
+                    progress_callback(100, "Submitted to LifeOS!")
+                return filename
 
-        if resp.status_code != 200:
-            print(f"[NotesSync] Server error: {resp.status_code} - {resp.text[:200]}")
-            raise Exception(f"Server returned {resp.status_code}: {resp.text[:200]}")
+            # Parse the stable error code; never echo note text.
+            code = None
+            try:
+                code = (resp.json() or {}).get('detail', {}).get('code')
+            except Exception:
+                pass
+            # 4xx are permanent for this payload → do not retry.
+            if 400 <= resp.status_code < 500:
+                raise Exception(f"{resp.status_code} {code or resp.text[:120]}")
+            last_err = f"{resp.status_code} {code or resp.text[:120]}"
+            print(f"[NotesSync] server {last_err} (attempt {attempt})")
+            if delay[1]:
+                time.sleep(delay[1])
 
-        print(f"[NotesSync] sync successful: {resp.status_code} - {resp.text[:200]}")
-
-        if progress_callback:
-            progress_callback(100, "Notes sync completed!")
-
-        return filename
+        raise Exception(f"Submit failed after retries: {last_err}")
