@@ -11,12 +11,21 @@ class PluginOCR:
         resources_dir = os.path.join(os.path.dirname(__file__), "resources")
         det_model_path = os.path.join(resources_dir, "ch_PP-OCRv5_mobile_det.onnx")
         rec_model_path = os.path.join(resources_dir, "ch_PP-OCRv5_rec_mobile_infer.onnx")
+        cls_model_path = os.path.join(resources_dir, "ch_ppocr_mobile_v2.0_cls_mobile.onnx")
 
-        # Use RapidOCR with bundled PP-OCRv5 models (no network required)
+        # Use RapidOCR with bundled models so OCR runs with NO network access.
+        # All three stages (Det / Cls / Rec) must point at a local model_path.
+        # The cls (angle classifier) path matters especially: some RapidOCR
+        # versions (e.g. 3.9.x) build the classifier eagerly in __init__ and do
+        # NOT honour Global.use_cls, so without a local cls path RapidOCR tries
+        # to download ch_ppocr_mobile_v2.0_cls_mobile.onnx from modelscope.cn at
+        # startup and crashes the whole app on offline / intranet machines.
         self.ocr_engine = RapidOCR(
             params={
                 "Det.engine_type": EngineType.ONNXRUNTIME,
                 "Det.model_path": det_model_path,
+                "Cls.engine_type": EngineType.ONNXRUNTIME,
+                "Cls.model_path": cls_model_path,
                 "Rec.engine_type": EngineType.ONNXRUNTIME,
                 "Rec.model_path": rec_model_path,
             }

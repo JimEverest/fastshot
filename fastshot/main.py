@@ -141,7 +141,13 @@ class SnipasteApp:
         self.print_config_info()
         # self.check_and_download_models()
         self.load_plugins()
-        self.ocr_engine = PluginOCR()
+        # OCR is an optional feature: never let an OCR/model/engine failure
+        # prevent the whole app from launching. Callers already null-guard it.
+        try:
+            self.ocr_engine = PluginOCR()
+        except Exception as e:
+            self.ocr_engine = None
+            print(f"[WARN] OCR engine unavailable, continuing without OCR: {e}")
         # self.plugins['fastshot.plugin_ask']=PluginAsk()
 
         # Initialize the hotkey listener

@@ -207,6 +207,26 @@ def get_monitors():
 
         user32 = ctypes.windll.user32
 
+        # HMONITOR/HDC/LPRECT/LPARAM are all pointer-sized. The previous code
+        # used ctypes.c_ulong (32-bit) for the handles and ctypes.c_ulongptr
+        # (which does not exist in ctypes) for LPRECT, so this whole branch
+        # always raised AttributeError and fell back to screeninfo. Use
+        # c_void_p everywhere so it is correct on 64-bit Windows, and pin the
+        # argtypes so the handles are not truncated when passed back in.
+        MONITORENUMPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_int,     # BOOL return
+            ctypes.c_void_p,  # HMONITOR
+            ctypes.c_void_p,  # HDC
+            ctypes.c_void_p,  # LPRECT
+            ctypes.c_void_p,  # LPARAM (dwData)
+        )
+        user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        user32.GetMonitorInfoW.restype = ctypes.c_int
+        user32.EnumDisplayMonitors.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, MONITORENUMPROC, ctypes.c_void_p
+        ]
+        user32.EnumDisplayMonitors.restype = ctypes.c_int
+
         def _monitor_callback(hmonitor, hdc, lprect, dwData):
             """Callback for EnumDisplayMonitors."""
             info = MONITORINFOEXW()
@@ -220,16 +240,12 @@ def get_monitors():
                     height=info.rcMonitor.bottom - info.rcMonitor.top,
                     is_primary=is_primary
                 ))
-            return True  # Continue enumeration
+            return 1  # Continue enumeration
 
-        # Enumerate all monitors
-        user32.EnumDisplayMonitors(None, None, ctypes.WINFUNCTYPE(
-            ctypes.c_bool,
-            ctypes.c_ulong,
-            ctypes.c_ulong,
-            ctypes.c_ulongptr,
-            ctypes.c_long
-        )(_monitor_callback), 0)
+        # Keep a reference to the callback for the duration of the call so it is
+        # not garbage-collected while native code still holds it.
+        _cb = MONITORENUMPROC(_monitor_callback)
+        user32.EnumDisplayMonitors(None, None, _cb, 0)
 
         return monitors
 
