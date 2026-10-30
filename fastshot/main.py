@@ -165,6 +165,14 @@ class SnipasteApp:
         from fastshot.notes_sync import NotesSyncManager
         self.notes_sync = NotesSyncManager(self)
 
+        # Send the desktop Outlook calendar to Life OS ([CalendarSync], off unless enabled)
+        try:
+            from fastshot.outlook_calendar import OutlookCalendarSync
+            self.calendar_sync = OutlookCalendarSync(self)
+            self.calendar_sync.start()
+        except Exception as e:
+            print(f"[CalendarSync] not started: {e}")
+
         # Initialize notes manager and cache manager
         from fastshot.notes_manager import NotesManager
         from fastshot.notes_cache import NotesCacheManager

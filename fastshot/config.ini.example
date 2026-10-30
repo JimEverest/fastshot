@@ -69,5 +69,12 @@ ingest_url = https://json-validator.centralindia.cloudapp.azure.com/ingest
 api_key = 
 encryption_key = qwer1234
 
+[CalendarSync]
+; Send the desktop (classic) Outlook calendar to Life OS through [NotesSync]'s /ingest; meeting bodies are never sent
+enabled = False
+interval_minutes = 15
+days_back = 1
+days_ahead = 14
+
 [Performance]
 release_hidden_image_cache = True
