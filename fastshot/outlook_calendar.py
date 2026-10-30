@@ -9,13 +9,15 @@ each send as the whole calendar for that window: a meeting removed in Outlook is
 
 Private appointments (Sensitivity = private) go as "私人安排" with only their time.
 
-config.ini:
+config.ini (also on the Settings window's "Outlook Calendar" tab):
     [CalendarSync]
-    enabled = True
+    enabled = True          ; automatic sending; off = only when asked
     interval_minutes = 15
     days_back = 1
     days_ahead = 14
 The /ingest address and the two keys come from [NotesSync] (ingest_url, api_key, encryption_key).
+Sync by hand any time: Settings → Outlook Calendar → 立即同步, or the hotkey (hotkey_calendar_sync, default Shift+F9),
+which shows its progress in a small note in the bottom-right corner.
 
 Try it once from CMD (prints what it read, then sends):
     python -m fastshot.outlook_calendar --once
@@ -145,47 +147,129 @@ def send(notes_sync, window, events):
 
 
 class OutlookCalendarSync:
-    """The background sender, started by Fastshot when [CalendarSync] enabled = True."""
+    """Automatic sending (when [CalendarSync] enabled = True) and on-demand sending (the Settings tab's 立即同步, or
+    the hotkey_calendar_sync hotkey), one at a time. Progress goes to a callback the caller marshals onto the UI
+    thread; `last` / `last_error` say how the latest round went."""
 
     def __init__(self, app):
         self.app = app
-        config = app.config
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._thread = None
+        self.last = None          # (when, events sent, Life OS's counts)
+        self.last_error = None    # (when, message)
+        self.reload()
+
+    def reload(self):
+        """Re-read [CalendarSync]; the background loop follows the new switch and interval."""
+        config = self.app.config
         section = 'CalendarSync'
-        self.enabled = config.has_section(section) and config.getboolean(section, 'enabled', fallback=False)
-        self.interval = max(5, config.getint(section, 'interval_minutes', fallback=15)) * 60 if self.enabled else 0
-        self.days_back = config.getint(section, 'days_back', fallback=1) if self.enabled else 1
-        self.days_ahead = config.getint(section, 'days_ahead', fallback=14) if self.enabled else 14
-        self._stop = threading.Event()
-        self.last = None
+        has = config.has_section(section)
+        self.enabled = has and config.getboolean(section, 'enabled', fallback=False)
+        self.interval = max(5, config.getint(section, 'interval_minutes', fallback=15) if has else 15) * 60
+        self.days_back = max(0, config.getint(section, 'days_back', fallback=1) if has else 1)
+        self.days_ahead = max(1, min(60, config.getint(section, 'days_ahead', fallback=14) if has else 14))
+        self._wake.set()
+
+    def ready(self):
+        notes = getattr(self.app, 'notes_sync', None)
+        return bool(notes and notes.api_key and notes.encryption_key and notes.ingest_url)
 
     def start(self):
-        if not self.enabled:
-            print("[CalendarSync] disabled")
-            return
-        if not getattr(self.app, 'notes_sync', None) or not self.app.notes_sync.api_key:
-            print("[CalendarSync] needs [NotesSync] ingest_url / api_key / encryption_key; not started")
-            return
-        threading.Thread(target=self._run, name='outlook-calendar-sync', daemon=True).start()
-        print(f"[CalendarSync] every {self.interval // 60} min, {self.days_back} day(s) back, {self.days_ahead} ahead")
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name='outlook-calendar-sync', daemon=True)
+            self._thread.start()
+        print(f"[CalendarSync] auto={'on' if self.enabled else 'off'}, every {self.interval // 60} min, "
+              f"{self.days_back} day(s) back, {self.days_ahead} ahead")
 
-    def stop(self):
-        self._stop.set()
+    def sync_once(self, progress=None):
+        """Read Outlook and send; returns Life OS's answer. progress(stage, text) is called along the way."""
+        say = progress or (lambda stage, text: None)
+        if not self.ready():
+            raise RuntimeError('Notes Sync 的 Ingest URL / API Key / XOR Key 还没填（设置 → Notes Sync）')
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError('上一次同步还没结束')
+        try:
+            say('reading', f'正在读取 Outlook 日历（前 {self.days_back} 天到后 {self.days_ahead} 天）…')
+            window, events = read_outlook(self.days_back, self.days_ahead)
+            say('sending', f'读到 {len(events)} 个日程，正在发送到 Life OS…')
+            answer = send(self.app.notes_sync, window, events)
+            counts = answer.get('calendar') or {}
+            self.last, self.last_error = (dt.datetime.now(), len(events), counts), None
+            say('done', f"已同步 {len(events)} 个日程：新增 {counts.get('added', 0)}、更新 {counts.get('updated', 0)}、"
+                        f"取消 {counts.get('cancelled', 0)}（{window['from']} ~ {window['to']}）")
+            print(f"[CalendarSync] sent {len(events)} events {window}: {counts}")
+            return answer
+        except Exception as error:
+            self.last_error = (dt.datetime.now(), f'{type(error).__name__}: {str(error)[:160]}')
+            say('error', f'同步失败：{self.last_error[1]}')
+            raise
+        finally:
+            if self._lock.locked():
+                self._lock.release()
 
-    def sync_once(self):
-        window, events = read_outlook(self.days_back, self.days_ahead)
-        answer = send(self.app.notes_sync, window, events)
-        self.last = (dt.datetime.now(), len(events), answer.get('calendar'))
-        print(f"[CalendarSync] sent {len(events)} events {window}: {answer.get('calendar')}")
-        return answer
+    def sync_now(self, progress=None):
+        """On demand, in the background (the UI stays responsive)."""
+        def work():
+            try:
+                self.sync_once(progress)
+            except Exception as error:
+                print(f"[CalendarSync] manual sync failed: {error}")
+        threading.Thread(target=work, name='outlook-calendar-sync-now', daemon=True).start()
+
+    def status_text(self):
+        parts = [f"自动同步：{'开，每 ' + str(self.interval // 60) + ' 分钟' if self.enabled else '关'}"]
+        if self.last:
+            when, n, counts = self.last
+            parts.append(f"上次成功：{when:%m-%d %H:%M}，{n} 个日程")
+        if self.last_error and (not self.last or self.last_error[0] > self.last[0]):
+            parts.append(f"上次失败：{self.last_error[0]:%m-%d %H:%M} {self.last_error[1]}")
+        return '；'.join(parts)
 
     def _run(self):
-        time.sleep(20)  # let Outlook and the app settle after start-up
-        while not self._stop.is_set():
-            try:
-                self.sync_once()
-            except Exception as error:  # Outlook closed, network down: try again next round
-                print(f"[CalendarSync] this round failed: {type(error).__name__}: {str(error)[:160]}")
-            self._stop.wait(self.interval)
+        self._wake.wait(20)  # let Outlook and the app settle after start-up
+        while True:
+            self._wake.clear()
+            if self.enabled and self.ready():
+                try:
+                    self.sync_once()
+                except Exception as error:  # Outlook closed, network down: try again next round
+                    print(f"[CalendarSync] this round failed: {type(error).__name__}: {str(error)[:160]}")
+            self._wake.wait(self.interval if self.enabled else 3600)
+
+
+class SyncToast:
+    """A small always-on-top note in the bottom-right corner that follows a manual sync and fades out when done."""
+
+    def __init__(self, root):
+        import tkinter as tk
+        self.root, self.window = root, tk.Toplevel(root)
+        self.window.overrideredirect(True)
+        self.window.attributes('-topmost', True)
+        self.label = tk.Label(self.window, text='', justify='left', bg='#1f2420', fg='#f5f3ee', padx=14, pady=10,
+                              font=('Microsoft YaHei UI', 10), wraplength=360)
+        self.label.pack()
+        self.show('reading', 'Outlook 日历同步…')
+
+    def show(self, stage, text):
+        colors = {'done': '#1f5f4a', 'error': '#b4432f'}
+        self.label.configure(text=f"📅 {text}", bg=colors.get(stage, '#1f2420'))
+        self.window.update_idletasks()
+        w, h = self.window.winfo_reqwidth(), self.window.winfo_reqheight()
+        x, y = self.window.winfo_screenwidth() - w - 24, self.window.winfo_screenheight() - h - 64
+        self.window.geometry(f'+{x}+{y}')
+        if stage in ('done', 'error'):
+            self.root.after(6000 if stage == 'done' else 10000, self.window.destroy)
+
+
+def sync_with_toast(app):
+    """The hotkey's action: a manual sync with the corner note. Call on the UI thread."""
+    toast = SyncToast(app.root)
+    sync = getattr(app, 'calendar_sync', None)
+    if sync is None:
+        toast.show('error', 'Outlook 日历同步没有启动')
+        return
+    sync.sync_now(progress=lambda stage, text: app.root.after(0, toast.show, stage, text))
 
 
 def _config():

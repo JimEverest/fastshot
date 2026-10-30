@@ -315,6 +315,11 @@ class HotkeyListener:
                                                 _mac_default('<ctrl>+<shift>+8', '<shift>+<f8>'))),
             self.on_image_gallery
         )
+        self.hotkey_calendar_sync = keyboard.HotKey(
+            keyboard.HotKey.parse(shortcuts.get('hotkey_calendar_sync',
+                                                _mac_default('<ctrl>+<shift>+9', '<shift>+<f9>'))),
+            self.on_calendar_sync
+        )
         self.hotkey_recover_cache = keyboard.HotKey(
             keyboard.HotKey.parse(shortcuts.get('hotkey_recover_cache',
                                                 _mac_default('<ctrl>+<shift>+0', '<shift>+<f12>'))),
@@ -496,6 +501,7 @@ class HotkeyListener:
         self.hotkey_session_manager.press(ck)
         self.hotkey_quick_notes.press(ck)
         self.hotkey_image_gallery.press(ck)
+        self.hotkey_calendar_sync.press(ck)
         self.hotkey_recover_cache.press(ck)
 
         if key not in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
@@ -526,6 +532,7 @@ class HotkeyListener:
         self.hotkey_session_manager.release(ck)
         self.hotkey_quick_notes.release(ck)
         self.hotkey_image_gallery.release(ck)
+        self.hotkey_calendar_sync.release(ck)
         self.hotkey_recover_cache.release(ck)
 
         if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r]:
@@ -755,6 +762,14 @@ class HotkeyListener:
             print(f"ERROR in on_quick_notes: {e}")
             import traceback
             traceback.print_exc()
+
+    def on_calendar_sync(self):
+        """Callback for the Outlook calendar sync hotkey: sync now, with a note in the corner."""
+        try:
+            from fastshot.outlook_calendar import sync_with_toast
+            self.root.after(0, sync_with_toast, self.app)
+        except Exception as e:
+            print(f"ERROR in on_calendar_sync: {e}")
 
     def on_image_gallery(self):
         """Callback for the image gallery hotkey."""

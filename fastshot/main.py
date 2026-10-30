@@ -318,6 +318,7 @@ class SnipasteApp:
                 'hotkey_session_manager': '<ctrl>+<shift>+6' if sys.platform == 'darwin' else '<shift>+<f6>',
                 'hotkey_quick_notes': '<ctrl>+<shift>+7' if sys.platform == 'darwin' else '<shift>+<f7>',
                 'hotkey_image_gallery': '<ctrl>+<shift>+8' if sys.platform == 'darwin' else '<shift>+<f8>',
+                'hotkey_calendar_sync': '<ctrl>+<shift>+9' if sys.platform == 'darwin' else '<shift>+<f9>',
                 'hotkey_recover_cache': '<ctrl>+<shift>+0' if sys.platform == 'darwin' else '<shift>+<f12>'
             }
             config['ScreenPen'] = {
@@ -376,6 +377,7 @@ class SnipasteApp:
             'hotkey_session_manager': 'Open Session Manager',
             'hotkey_quick_notes': 'Open Quick Notes',
             'hotkey_image_gallery': 'Open Image Gallery (Fullscreen Thumbnail View)',
+            'hotkey_calendar_sync': 'Sync Outlook Calendar to Life OS now',
             'hotkey_recover_cache': 'Recover from Temp Cache'
         }
         for key, desc in shortcut_descriptions.items():

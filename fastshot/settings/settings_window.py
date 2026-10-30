@@ -4,6 +4,7 @@ from .components.shortcuts_frame import ShortcutsFrame
 from .components.screenpen_frame import ScreenPenFrame
 from .components.genai_frame import GenAIFrame
 from .components.notes_sync_frame import NotesSyncFrame
+from .components.calendar_sync_frame import CalendarSyncFrame
 from .settings_manager import SettingsManager
 
 class SettingsWindow(tk.Toplevel):
@@ -22,12 +23,14 @@ class SettingsWindow(tk.Toplevel):
         self.screenpen_frame = ScreenPenFrame(self.notebook, self.settings_manager)
         self.genai_frame = GenAIFrame(self.notebook, self.settings_manager)
         self.notes_sync_frame = NotesSyncFrame(self.notebook, self.settings_manager)
+        self.calendar_sync_frame = CalendarSyncFrame(self.notebook, self.settings_manager, app=app)
 
         # 添加到notebook
         self.notebook.add(self.shortcuts_frame, text='Shortcuts')
         self.notebook.add(self.screenpen_frame, text='Screen Pen')
         self.notebook.add(self.genai_frame, text='GenAI')
         self.notebook.add(self.notes_sync_frame, text='Notes Sync')
+        self.notebook.add(self.calendar_sync_frame, text='Outlook Calendar')
         
         # 如果指定了活动标签页，切换到该页
         if active_tab is not None:
@@ -49,12 +52,14 @@ class SettingsWindow(tk.Toplevel):
         screenpen_settings = self.screenpen_frame.get_settings()
         genai_settings = self.genai_frame.get_settings()
         notes_sync_settings = self.notes_sync_frame.get_settings()
+        calendar_sync_settings = self.calendar_sync_frame.get_settings()
 
         # 更新到配置管理器
         self.settings_manager.update_section('Shortcuts', shortcuts_settings)
         self.settings_manager.update_section('ScreenPen', screenpen_settings)
         self.settings_manager.update_section('PowerGenAI', genai_settings)
         self.settings_manager.update_section('NotesSync', notes_sync_settings)
+        self.settings_manager.update_section('CalendarSync', calendar_sync_settings)
 
         # 保存所有设置
         self.settings_manager.save_settings()
@@ -65,7 +70,11 @@ class SettingsWindow(tk.Toplevel):
 
         # Reload notes sync config
         if self.app and hasattr(self.app, 'notes_sync'):
+            if hasattr(self.app, 'config_path'):  # the app's own copy of config.ini follows what was just saved
+                self.app.config.read(self.app.config_path, encoding='utf-8')
             self.app.notes_sync._load_config()
+        if self.app and getattr(self.app, 'calendar_sync', None) is not None:
+            self.app.calendar_sync.reload()  # the automatic sync follows the new switch and interval at once
         
         # 显示保存成功消息
         from tkinter import messagebox

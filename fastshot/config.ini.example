@@ -25,6 +25,7 @@ hotkey_load_session = <shift>+<f5>
 hotkey_session_manager = <shift>+<f6>
 hotkey_quick_notes = <shift>+<f7>
 hotkey_image_gallery = <shift>+<f8>
+hotkey_calendar_sync = <shift>+<f9>
 hotkey_recover_cache = <shift>+<f12>
 
 [ScreenPen]
@@ -70,7 +71,8 @@ api_key =
 encryption_key = qwer1234
 
 [CalendarSync]
-; Send the desktop (classic) Outlook calendar to Life OS through [NotesSync]'s /ingest; meeting bodies are never sent
+; Send the desktop (classic) Outlook calendar to Life OS through [NotesSync]'s /ingest; meeting bodies are never sent.
+; enabled = automatic sending; off = only on demand (Settings → Outlook Calendar → 立即同步, or hotkey_calendar_sync)
 enabled = False
 interval_minutes = 15
 days_back = 1
